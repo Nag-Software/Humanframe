@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
@@ -25,40 +26,58 @@ export function EveRuntimeProvider({
   sessionId,
   children,
 }: {
-  threadId: string;
+  /** Null until the first message has created the thread server-side. */
+  threadId?: string | null;
   /** Existing eve session for this thread, when it has one. */
   sessionId?: string | null;
   children: ReactNode;
 }) {
+  const router = useRouter();
   const agent = useEveAgent({
     initialSession: sessionId ? { sessionId, streamIndex: 0 } : undefined,
     resume: Boolean(sessionId),
   });
 
   const { send, respond, cancel } = agent;
-
-  // eve mints the session id on the first turn. Supabase owns the thread, so
-  // the link is stored once, as soon as it exists.
-  const linkedSessionId = useRef(sessionId ?? null);
-  const currentSessionId = agent.session?.sessionId ?? null;
-
-  useEffect(() => {
-    if (!currentSessionId || linkedSessionId.current === currentSessionId) {
-      return;
-    }
-    linkedSessionId.current = currentSessionId;
-    void fetch("/api/assistants/maya/session", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId, sessionId: currentSessionId }),
-    });
-  }, [currentSessionId, threadId]);
+  const starting = useRef(false);
 
   const onNew = useCallback(
     async (message: AppendMessage) => {
-      await send(toUserContent(message));
+      const content = toUserContent(message);
+
+      if (sessionId) {
+        await send(content);
+        return;
+      }
+
+      // First message of a new conversation: the server creates the eve
+      // session and claims the thread that owns it, then the URL adopts the
+      // thread id it minted. The eve session id stays private.
+      if (starting.current) {
+        return;
+      }
+      starting.current = true;
+
+      try {
+        const response = await fetch("/api/assistants/maya/session", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            message: typeof content === "string" ? content : firstText(content),
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Session start failed: ${response.status}`);
+        }
+
+        const created = (await response.json()) as { threadId: string };
+        router.replace(`/assistants/maya?t=${created.threadId}`);
+      } finally {
+        starting.current = false;
+      }
     },
-    [send]
+    [router, send, sessionId]
   );
 
   const onRespondToToolApproval = useCallback(
@@ -90,7 +109,7 @@ export function EveRuntimeProvider({
   }, [cancel]);
 
   const attachments = useMemo(
-    () => createSupabaseAttachmentAdapter(() => threadId),
+    () => createSupabaseAttachmentAdapter(() => threadId ?? undefined),
     [threadId]
   );
 
@@ -110,6 +129,14 @@ export function EveRuntimeProvider({
       {children}
     </AssistantRuntimeProvider>
   );
+}
+
+function firstText(content: UserContent): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  const text = content.find((part) => part.type === "text");
+  return text && "text" in text ? text.text : "";
 }
 
 /** assistant-ui's composer output → the content shape eve's `send` accepts. */

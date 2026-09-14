@@ -19,8 +19,8 @@ import type {
 class EveRuntime implements AgentRuntime {
   readonly #client: Client;
 
-  constructor(host: string) {
-    this.#client = new Client({ host });
+  constructor(host: string, headers?: Record<string, string>) {
+    this.#client = new Client({ host, headers, redirect: "manual" });
   }
 
   async startSession(input: {
@@ -245,10 +245,17 @@ function toRuntimeEvent(event: MessageStreamEvent): RuntimeEvent | null {
   }
 }
 
-let runtime: AgentRuntime | null = null;
-
-/** Same-origin in the app; the host is only explicit in scripts and tests. */
-export function getAgentRuntime(): AgentRuntime {
-  runtime ??= new EveRuntime(serverEnv().APP_URL);
-  return runtime;
+/**
+ * The agent's HTTP routes are mounted on this app's own origin, and they run
+ * their own auth walk. A route handler acting for a signed-in user therefore
+ * forwards that user's cookie, so the agent sees the same principal the request
+ * arrived with instead of a service identity.
+ */
+export function getAgentRuntime(
+  options: { cookie?: string | null } = {}
+): AgentRuntime {
+  return new EveRuntime(
+    serverEnv().APP_URL,
+    options.cookie ? { cookie: options.cookie } : undefined
+  );
 }

@@ -83,6 +83,69 @@ export async function ensureThread(
   }
 }
 
+/**
+ * The canonical thread for an eve session, created on first sight.
+ *
+ * `threads.eve_session_id` is unique, so this converges on one row no matter
+ * how many times it runs or who calls it first. The database mints the id;
+ * nothing upstream invents one.
+ */
+export async function ensureThreadForSession(
+  scope: ThreadScope,
+  input: {
+    eveSessionId: string;
+    assistantId: string;
+    title?: string;
+    channel?: Channel;
+  }
+): Promise<string> {
+  const existing = await findThreadIdBySession(scope, input.eveSessionId);
+  if (existing) {
+    return existing;
+  }
+
+  const { data, error } = await scope.client
+    .from(THREADS)
+    .insert({
+      workspace_id: scope.workspaceId,
+      assistant_id: input.assistantId,
+      created_by: scope.userId,
+      channel: input.channel ?? "chat",
+      eve_session_id: input.eveSessionId,
+      title: input.title?.slice(0, 120) ?? null,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+
+  if (data) {
+    return data.id;
+  }
+
+  // Someone else won the race on the unique index.
+  const raced = await findThreadIdBySession(scope, input.eveSessionId);
+  if (raced) {
+    return raced;
+  }
+
+  logger.error("db.ensure_thread_for_session_failed", {
+    eveSessionId: input.eveSessionId,
+    ...errorFields(error),
+  });
+  throw new Error("Could not create thread");
+}
+
+export async function findThreadIdBySession(
+  scope: ThreadScope,
+  eveSessionId: string
+): Promise<string | null> {
+  const { data } = await scope.client
+    .from(THREADS)
+    .select("id")
+    .eq("eve_session_id", eveSessionId)
+    .maybeSingle<{ id: string }>();
+  return data?.id ?? null;
+}
+
 export async function getThread(
   scope: ThreadScope,
   threadId: string

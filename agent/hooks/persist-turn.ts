@@ -258,11 +258,14 @@ async function upsertToolCall(
   const { error } = await target.client.from("tool_calls").upsert(
     {
       workspace_id: target.workspaceId,
+      // A call keeps its identity across an approval pause, so the row is keyed
+      // on the session. run_id points at the turn it last progressed in.
+      eve_session_id: sessionId,
       run_id: run.id,
       thread_id: target.threadId,
       ...patch,
     },
-    { onConflict: "run_id,call_id" }
+    { onConflict: "eve_session_id,call_id" }
   );
   report("tool_call", error);
 }

@@ -18,7 +18,8 @@ export function MayaChat({
   onVoiceCall,
   onVideoCall,
 }: {
-  threadId: string;
+  /** Null on eve until the first message creates the thread server-side. */
+  threadId: string | null;
   initialMessages: MayaMessage[];
   /** Cursor for the previous page of history, when the thread has one. */
   olderMessagesCursor?: string | null;
@@ -42,14 +43,23 @@ export function MayaChat({
   // Both runtimes render the same thread; only the transport differs.
   if (publicEnv.NEXT_PUBLIC_MAYA_RUNTIME === "eve") {
     return (
-      <EveRuntimeProvider threadId={threadId} sessionId={eveSessionId}>
+      // The hook binds its session when the store is created, so a new session
+      // needs a fresh provider rather than a prop update.
+      <EveRuntimeProvider
+        key={eveSessionId ?? "new"}
+        threadId={threadId}
+        sessionId={eveSessionId}
+      >
         {body}
       </EveRuntimeProvider>
     );
   }
 
   return (
-    <MayaRuntimeProvider threadId={threadId} initialMessages={initialMessages}>
+    <MayaRuntimeProvider
+      threadId={threadId ?? ""}
+      initialMessages={initialMessages}
+    >
       {body}
     </MayaRuntimeProvider>
   );

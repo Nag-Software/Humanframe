@@ -15,9 +15,10 @@ const cache = new Map<string, SessionTarget>();
 /**
  * Maps an eve session to the Humanframe rows it belongs to.
  *
- * The thread is keyed on `eve_session_id`, which is unique, so the hook and
- * the app's own link route converge on one row no matter which one gets there
- * first.
+ * The app owns thread creation: `/api/assistants/maya/session` creates the eve
+ * session and claims its thread. This hook only looks the thread up, so it can
+ * never race the app into a second, competing row. The lookup retries briefly
+ * because the first turn starts streaming while that claim is still in flight.
  */
 export async function resolveSessionTarget(input: {
   sessionId: string;
@@ -61,14 +62,15 @@ export async function resolveSessionTarget(input: {
     return null;
   }
 
-  const threadId = await ensureThread(client, {
-    workspaceId: membership.workspace_id,
-    assistantId: assistant.id,
-    userId: input.userId,
-    sessionId: input.sessionId,
-  });
-
+  const threadId = await findThread(client, input.sessionId);
   if (!threadId) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "persist.thread_not_found",
+        sessionId: input.sessionId,
+      })
+    );
     return null;
   }
 
@@ -83,47 +85,26 @@ export async function resolveSessionTarget(input: {
   return target;
 }
 
-async function ensureThread(
+const LOOKUP_ATTEMPTS = 6;
+const LOOKUP_DELAY_MS = 250;
+
+async function findThread(
   client: SupabaseClient,
-  input: {
-    workspaceId: string;
-    assistantId: string;
-    userId: string;
-    sessionId: string;
-  }
+  sessionId: string
 ): Promise<string | null> {
-  const existing = await client
-    .from("threads")
-    .select("id")
-    .eq("eve_session_id", input.sessionId)
-    .maybeSingle<{ id: string }>();
+  for (let attempt = 0; attempt < LOOKUP_ATTEMPTS; attempt += 1) {
+    const { data } = await client
+      .from("threads")
+      .select("id")
+      .eq("eve_session_id", sessionId)
+      .maybeSingle<{ id: string }>();
 
-  if (existing.data) {
-    return existing.data.id;
+    if (data) {
+      return data.id;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, LOOKUP_DELAY_MS));
   }
 
-  const inserted = await client
-    .from("threads")
-    .insert({
-      workspace_id: input.workspaceId,
-      assistant_id: input.assistantId,
-      created_by: input.userId,
-      channel: "chat",
-      eve_session_id: input.sessionId,
-    })
-    .select("id")
-    .maybeSingle<{ id: string }>();
-
-  if (inserted.data) {
-    return inserted.data.id;
-  }
-
-  // Someone else won the race on the unique eve_session_id index.
-  const retry = await client
-    .from("threads")
-    .select("id")
-    .eq("eve_session_id", input.sessionId)
-    .maybeSingle<{ id: string }>();
-
-  return retry.data?.id ?? null;
+  return null;
 }
