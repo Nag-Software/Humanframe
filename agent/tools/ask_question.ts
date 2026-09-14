@@ -1,3 +1,10 @@
-// Lets Maya pause mid-turn and ask the user a question. Same durable
-// pause-and-resume path as tool approvals.
-export { default } from "eve/tools/ask_question";
+import { disableTool } from "eve/tools";
+
+/**
+ * Disabled on purpose.
+ *
+ * `ask_question` parks the turn behind a framework prompt. Our thread renders
+ * that as a bare tool call, so the user sees "used a tool" and never the
+ * question. Maya asks in her own words instead; approvals keep their own card.
+ */
+export default disableTool();
