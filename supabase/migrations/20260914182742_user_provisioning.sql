@@ -1,10 +1,3 @@
--- Idempotent user provisioning.
---
--- The signup trigger from 0002 covers the normal path, but OAuth sign-ins and
--- any user created before the trigger existed must be able to converge on the
--- same state. provision_user() is safe to run any number of times; the app
--- calls ensure_user_bootstrap() right after a successful sign-in.
-
 create or replace function public.provision_user(target_user uuid)
 returns uuid
 language plpgsql
@@ -15,7 +8,7 @@ declare
   auth_user record;
   base_slug text;
   display_name text;
-  resolved_workspace_id uuid;
+  workspace_id uuid;
 begin
   select id, email, raw_user_meta_data
     into auth_user
@@ -45,14 +38,13 @@ begin
         full_name = coalesce(excluded.full_name, public.users.full_name),
         avatar_url = coalesce(excluded.avatar_url, public.users.avatar_url);
 
-  -- Already a member somewhere: that membership is the personal workspace.
-  select m.workspace_id into resolved_workspace_id
+  select m.workspace_id into workspace_id
   from public.workspace_members m
   where m.user_id = auth_user.id
   order by m.created_at asc
   limit 1;
 
-  if resolved_workspace_id is null then
+  if workspace_id is null then
     base_slug := trim(both '-' from regexp_replace(
       lower(coalesce(nullif(split_part(coalesce(auth_user.email, ''), '@', 1), ''), 'workspace')),
       '[^a-z0-9]+', '-', 'g'
@@ -69,22 +61,21 @@ begin
       auth_user.id
     )
     on conflict (slug) do update set slug = public.workspaces.slug
-    returning id into resolved_workspace_id;
+    returning id into workspace_id;
 
     insert into public.workspace_members (workspace_id, user_id, role)
-    values (resolved_workspace_id, auth_user.id, 'owner')
+    values (workspace_id, auth_user.id, 'owner')
     on conflict (workspace_id, user_id) do nothing;
   end if;
 
   insert into public.assistants (workspace_id, slug, name, role)
-  values (resolved_workspace_id, 'maya', 'Maya', 'Chief of Staff')
+  values (workspace_id, 'maya', 'Maya', 'Chief of Staff')
   on conflict (workspace_id, slug) do nothing;
 
-  return resolved_workspace_id;
+  return workspace_id;
 end;
 $$;
 
--- The signup trigger now shares one implementation with the app-side call.
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -116,3 +107,4 @@ $$;
 revoke execute on function public.provision_user(uuid) from public;
 revoke execute on function public.ensure_user_bootstrap() from public;
 grant execute on function public.ensure_user_bootstrap() to authenticated;
+;

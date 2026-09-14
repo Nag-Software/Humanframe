@@ -39,3 +39,4 @@ create policy "members read subscription" on public.subscriptions
 
 -- Written only by the Stripe webhook, which uses the service role and so
 -- bypasses RLS; no authenticated-write policy is defined here on purpose.
+;

@@ -1,5 +1,4 @@
 -- Maya chat: samtaler, meldinger (strukturerte parts) og vedlegg-metadata.
--- Kjør i Supabase SQL editor, eller med `supabase db push`.
 
 create extension if not exists "pgcrypto";
 
@@ -16,7 +15,6 @@ create table if not exists public.maya_messages (
   conversation_id uuid not null
     references public.maya_conversations (id) on delete cascade,
   role text not null check (role in ('system', 'user', 'assistant')),
-  -- Hele UIMessage.parts-arrayet lagres strukturert, ikke flatet til tekst.
   parts jsonb not null default '[]'::jsonb,
   metadata jsonb not null default '{}'::jsonb,
   position integer not null,
@@ -42,13 +40,10 @@ create table if not exists public.maya_attachments (
 create index if not exists maya_attachments_conversation_idx
   on public.maya_attachments (conversation_id);
 
--- Storage-bøtte for opplastede filer.
 insert into storage.buckets (id, name, public)
 values ('maya-attachments', 'maya-attachments', true)
 on conflict (id) do nothing;
 
--- RLS: alt går via service role i API-rutene. Slå på RLS og legg til
--- eier-policyer her når innlogging er på plass.
 alter table public.maya_conversations enable row level security;
 alter table public.maya_messages enable row level security;
 alter table public.maya_attachments enable row level security;
@@ -87,3 +82,4 @@ create policy "own attachments" on public.maya_attachments
       where c.id = conversation_id and c.user_id = auth.uid()
     )
   );
+;

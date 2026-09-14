@@ -1,12 +1,4 @@
--- Workspace-based tenancy.
---
--- The MVP is one user with one Maya, but every tenant-owned row carries a
--- workspace_id and row level security is expressed as workspace membership.
--- Teams can then be added later without rewriting the schema or the policies.
-
 create extension if not exists "pgcrypto";
-
--- ---------------------------------------------------------------- utilities
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -17,8 +9,6 @@ begin
   return new;
 end;
 $$;
-
--- --------------------------------------------------------------- core tables
 
 create table if not exists public.users (
   id uuid primary key references auth.users (id) on delete cascade,
@@ -66,8 +56,6 @@ create table if not exists public.assistants (
   slug text not null,
   name text not null,
   role text,
-  -- Identity lives in agent/instructions.md; this column is for per-workspace
-  -- overrides once Maya can be tuned from the product.
   instructions text,
   status text not null default 'active'
     check (status in ('active', 'paused', 'archived')),
@@ -87,10 +75,6 @@ create trigger set_workspaces_updated_at before update on public.workspaces
 drop trigger if exists set_assistants_updated_at on public.assistants;
 create trigger set_assistants_updated_at before update on public.assistants
   for each row execute function public.set_updated_at();
-
--- ------------------------------------------------------- membership helpers
--- SECURITY DEFINER so the policies below can query membership without
--- recursing into the policies on workspace_members.
 
 create or replace function public.is_workspace_member(target_workspace uuid)
 returns boolean
@@ -130,8 +114,6 @@ revoke execute on function public.is_workspace_member(uuid) from public;
 revoke execute on function public.has_workspace_role(uuid, public.workspace_role[]) from public;
 grant execute on function public.is_workspace_member(uuid) to authenticated;
 grant execute on function public.has_workspace_role(uuid, public.workspace_role[]) to authenticated;
-
--- ------------------------------------------------------------ signup trigger
 
 create or replace function public.handle_new_user()
 returns trigger
@@ -194,10 +176,6 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- ------------------------------------------------- tenancy on existing chat
--- The 0001 policies read maya_conversations.user_id, so they have to go
--- before the column does.
-
 drop policy if exists "own conversations" on public.maya_conversations;
 drop policy if exists "own messages" on public.maya_messages;
 drop policy if exists "own attachments" on public.maya_attachments;
@@ -213,7 +191,6 @@ alter table public.maya_messages
 alter table public.maya_attachments
   add column if not exists workspace_id uuid references public.workspaces (id) on delete cascade;
 
--- Backfill from the pre-workspace user_id column, if any rows exist.
 update public.maya_conversations c
 set workspace_id = m.workspace_id,
     created_by = coalesce(c.created_by, c.user_id)
@@ -255,8 +232,6 @@ drop trigger if exists set_maya_conversations_updated_at on public.maya_conversa
 create trigger set_maya_conversations_updated_at
   before update on public.maya_conversations
   for each row execute function public.set_updated_at();
-
--- ---------------------------------------------------------------------- RLS
 
 alter table public.users enable row level security;
 alter table public.workspaces enable row level security;
@@ -318,15 +293,8 @@ create policy "workspace attachments" on public.maya_attachments
   using (public.is_workspace_member(workspace_id))
   with check (public.is_workspace_member(workspace_id));
 
--- ------------------------------------------------------------------ storage
--- The bucket was public in 0001. Attachments can contain anything the user
--- uploads, so it becomes private and access is scoped by the workspace id in
--- the first path segment: <workspace_id>/<conversation_id>/<file>.
-
 update storage.buckets set public = false where id = 'maya-attachments';
 
--- Returns null instead of raising when the first path segment is not a uuid,
--- so a malformed object name is denied rather than breaking the policy.
 create or replace function public.workspace_id_from_object_name(object_name text)
 returns uuid
 language sql
@@ -351,3 +319,4 @@ create policy "workspace attachment objects" on storage.objects
     bucket_id = 'maya-attachments'
     and public.is_workspace_member(public.workspace_id_from_object_name(name))
   );
+;
