@@ -1,36 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Humanframe
 
-## Getting Started
+An operating system for digital employees. The first one is **Maya** — a Chief of
+Staff you chat with, call, and meet face to face, who remembers you between
+conversations and keeps working after you close the tab.
 
-First, run the development server:
+The product vision lives in [`docs/VISION.md`](docs/VISION.md), the architecture
+and phase plan in [`docs/PLAN.md`](docs/PLAN.md), and the data model in
+[`docs/DATA-MODEL.md`](docs/DATA-MODEL.md).
+
+## Stack
+
+| Layer | Choice |
+| --- | --- |
+| App & API | Next.js 16 (App Router), TypeScript, Vercel |
+| Chat UI | assistant-ui + shadcn/ui |
+| Agent runtime | [eve](https://eve.dev) (preview), mounted in this app with `withEve` |
+| Durable execution | Vercel Workflows |
+| Model routing | Vercel AI Gateway (OIDC in preview/production) |
+| Database, auth, storage | Supabase (Postgres, RLS, pgvector, Storage) |
+
+## Getting started
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`next dev` also boots the eve runtime and mounts it at `/eve/v1/*` on the same
+origin. Check it with:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+curl http://localhost:3000/eve/v1/health
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Environment
 
-## Learn More
+Copy the values into `.env.local` (never committed):
 
-To learn more about Next.js, take a look at the following resources:
+| Variable | Purpose |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase publishable key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only; used by background work, never by a request handler that has a user session |
+| `APP_URL` | Origin used for auth callbacks |
+| `OPENAI_API_KEY` | The phase 1 chat route and, later, GPT-Live |
+| `MAYA_MODEL` | Model id for that route |
+| `AI_GATEWAY_API_KEY` | Optional local fallback when Vercel OIDC is unavailable |
+| `NEXT_PUBLIC_MAYA_RUNTIME` | `ai-sdk` (default) or `eve` |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Model access in preview and production runs on Vercel OIDC. Locally, `eve link`
+populates `VERCEL_OIDC_TOKEN`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Database
 
-## Deploy on Vercel
+Migrations live in `supabase/migrations/` and are applied with the Supabase CLI:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+supabase db push
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Every tenant-owned table carries a `workspace_id`, and row level security is
+expressed as membership in `workspace_members`. A signup trigger provisions a
+personal workspace, an `owner` membership and a Maya for each new user;
+`ensure_user_bootstrap()` makes that idempotent for OAuth sign-ins.
+
+## Layout
+
+```
+agent/        eve agent: instructions, tools, channels (filesystem-first)
+app/          Next.js routes — (app) is the signed-in shell, (auth) is login
+components/   assistant-ui elements, Maya chat, auth UI, shadcn primitives
+lib/          env validation, i18n, Supabase clients, shared helpers
+server/       runtime seam, repositories, request scope — never imported by the UI
+supabase/     migrations and CLI config
+```
+
+Two boundaries matter: the UI never imports the agent runtime directly, and
+nothing outside `server/agent/runtime/` imports `eve` on the server. eve is in
+preview, so it sits behind the `AgentRuntime` interface.
+
+## Checks
+
+```bash
+pnpm exec tsc --noEmit
+pnpm lint
+pnpm build
+```

@@ -43,3 +43,6 @@ next-env.d.ts
 # eve build artifacts
 .eve/
 .output/
+
+# Local Claude Code settings
+.claude/settings.local.json

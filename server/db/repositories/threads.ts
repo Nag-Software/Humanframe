@@ -1,0 +1,169 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { errorFields, logger } from "@/lib/logger";
+import { encodeCursor, type Cursor } from "@/server/db/cursor";
+
+const THREADS = "threads";
+
+export type Channel = "chat" | "live" | "facetime" | "system";
+
+export type ThreadScope = {
+  client: SupabaseClient;
+  workspaceId: string;
+  userId: string;
+};
+
+export type Thread = {
+  id: string;
+  title: string | null;
+  channel: Channel;
+  status: "active" | "archived";
+  assistantId: string;
+  eveSessionId: string | null;
+  lastMessageAt: string;
+};
+
+type ThreadRow = {
+  id: string;
+  title: string | null;
+  channel: Channel;
+  status: "active" | "archived";
+  assistant_id: string;
+  eve_session_id: string | null;
+  last_message_at: string;
+};
+
+function toThread(row: ThreadRow): Thread {
+  return {
+    id: row.id,
+    title: row.title,
+    channel: row.channel,
+    status: row.status,
+    assistantId: row.assistant_id,
+    eveSessionId: row.eve_session_id,
+    lastMessageAt: row.last_message_at,
+  };
+}
+
+const THREAD_COLUMNS =
+  "id, title, channel, status, assistant_id, eve_session_id, last_message_at";
+
+/**
+ * Claims a thread id for this workspace. Row level security rejects an id that
+ * already belongs to another workspace, which is what makes this safe to call
+ * before any model work runs.
+ */
+export async function ensureThread(
+  scope: ThreadScope,
+  input: {
+    threadId: string;
+    assistantId: string;
+    title?: string;
+    channel?: Channel;
+  }
+): Promise<void> {
+  const { error } = await scope.client.from(THREADS).upsert(
+    {
+      id: input.threadId,
+      workspace_id: scope.workspaceId,
+      assistant_id: input.assistantId,
+      created_by: scope.userId,
+      channel: input.channel ?? "chat",
+      title: input.title?.slice(0, 120) ?? null,
+    },
+    { onConflict: "id", ignoreDuplicates: true }
+  );
+
+  if (error) {
+    logger.error("db.ensure_thread_failed", {
+      threadId: input.threadId,
+      ...errorFields(error),
+    });
+    throw new Error("Could not create thread");
+  }
+}
+
+export async function getThread(
+  scope: ThreadScope,
+  threadId: string
+): Promise<Thread | null> {
+  const { data } = await scope.client
+    .from(THREADS)
+    .select(THREAD_COLUMNS)
+    .eq("id", threadId)
+    .maybeSingle<ThreadRow>();
+
+  return data ? toThread(data) : null;
+}
+
+/** Binds a thread to its durable eve session. */
+export async function linkEveSession(
+  scope: ThreadScope,
+  threadId: string,
+  eveSessionId: string
+): Promise<void> {
+  const { error } = await scope.client
+    .from(THREADS)
+    .update({ eve_session_id: eveSessionId })
+    .eq("id", threadId);
+
+  if (error) {
+    logger.error("db.link_eve_session_failed", {
+      threadId,
+      ...errorFields(error),
+    });
+  }
+}
+
+export async function touchThread(
+  scope: ThreadScope,
+  threadId: string,
+  lastMessageAt: string,
+  title?: string
+): Promise<void> {
+  const patch: Record<string, unknown> = { last_message_at: lastMessageAt };
+  if (title) {
+    patch.title = title.slice(0, 120);
+  }
+  await scope.client.from(THREADS).update(patch).eq("id", threadId);
+}
+
+/** Keyset pagination on `(last_message_at, id)`; never OFFSET. */
+export async function listThreads(
+  scope: ThreadScope,
+  options: { limit?: number; cursor?: Cursor | null; assistantId?: string } = {}
+): Promise<{ threads: Thread[]; nextCursor: string | null }> {
+  const limit = Math.min(options.limit ?? 20, 100);
+
+  let query = scope.client
+    .from(THREADS)
+    .select(THREAD_COLUMNS)
+    .eq("status", "active")
+    .order("last_message_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(limit);
+
+  if (options.assistantId) {
+    query = query.eq("assistant_id", options.assistantId);
+  }
+  if (options.cursor) {
+    query = query.or(
+      `last_message_at.lt.${options.cursor.createdAt},` +
+        `and(last_message_at.eq.${options.cursor.createdAt},id.lt.${options.cursor.id})`
+    );
+  }
+
+  const { data, error } = await query.returns<ThreadRow[]>();
+  if (error || !data) {
+    return { threads: [], nextCursor: null };
+  }
+
+  const threads = data.map(toThread);
+  const last = data.at(-1);
+  const nextCursor =
+    data.length === limit && last
+      ? encodeCursor({ createdAt: last.last_message_at, id: last.id })
+      : null;
+
+  return { threads, nextCursor };
+}
