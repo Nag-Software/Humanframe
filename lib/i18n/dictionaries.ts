@@ -30,6 +30,46 @@ export const en = {
       pro: "Pro",
     },
   },
+  settings: {
+    title: "Settings",
+    description: "Manage your account and workspace.",
+    upgrade: {
+      description: "Unlock higher limits and extra assistants.",
+      current: "Current plan",
+      included: "Pro includes",
+      onPro: "This workspace is already on Pro.",
+      features: {
+        assistants: "More assistants in the workspace",
+        history: "Longer memory and history",
+        priority: "Priority support",
+      },
+    },
+    account: {
+      description: "Your profile and sign-in details.",
+      name: "Name",
+      email: "Email",
+    },
+    billing: {
+      description: "Subscription, invoices, and payment method.",
+      plan: "Plan",
+      invoices: "Invoices",
+    },
+    notifications: {
+      description: "Choose what we email you about.",
+      product: {
+        title: "Product updates",
+        description: "New features and improvements.",
+      },
+      billingAlerts: {
+        title: "Billing",
+        description: "Receipts and plan changes.",
+      },
+      mentions: {
+        title: "Mentions",
+        description: "When someone needs your attention.",
+      },
+    },
+  },
 };
 
 export type Dictionary = typeof en;
@@ -60,6 +100,46 @@ export const no: Dictionary = {
     plans: {
       free: "Free",
       pro: "Pro",
+    },
+  },
+  settings: {
+    title: "Innstillinger",
+    description: "Administrer kontoen og arbeidsområdet ditt.",
+    upgrade: {
+      description: "Lås opp høyere grenser og flere assistenter.",
+      current: "Nåværende plan",
+      included: "Pro inkluderer",
+      onPro: "Dette arbeidsområdet er allerede på Pro.",
+      features: {
+        assistants: "Flere assistenter i arbeidsområdet",
+        history: "Lengre minne og historikk",
+        priority: "Prioritert støtte",
+      },
+    },
+    account: {
+      description: "Profilen din og innloggingsdetaljer.",
+      name: "Navn",
+      email: "E-post",
+    },
+    billing: {
+      description: "Abonnement, kvitteringer og betalingsmåte.",
+      plan: "Plan",
+      invoices: "Kvitteringer",
+    },
+    notifications: {
+      description: "Velg hva vi sender deg på e-post.",
+      product: {
+        title: "Produktoppdateringer",
+        description: "Nye funksjoner og forbedringer.",
+      },
+      billingAlerts: {
+        title: "Fakturering",
+        description: "Kvitteringer og planendringer.",
+      },
+      mentions: {
+        title: "Omtaler",
+        description: "Når noen trenger oppmerksomheten din.",
+      },
     },
   },
 };
