@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "db:migrate": "supabase db push",
-    "test:bridge": "node tests/maya-bridge.test.ts"
+    "test": "tsx tests/maya-fixtures.test.mts",
+    "test:live": "tsx tests/maya-live.test.mts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.66",
@@ -49,6 +50,7 @@
     "eslint-config-next": "16.3.5",
     "supabase": "^2.117.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5"
   },
   "packageManager": "pnpm@11.1.3"

@@ -1,12 +1,15 @@
 /**
- * Regression tests for what the Maya thread actually renders.
+ * Live regression tests for what the Maya thread actually renders.
  *
  * They run against the local dev server with NEXT_PUBLIC_MAYA_RUNTIME=eve, go
  * through the app's own session route, and project the stream with eve's
  * reducer plus our assistant-ui adapter. A turn that only produces a tool call
  * fails here the same way it failed in the UI.
  *
- *   pnpm test:bridge
+ * They need a running dev server and model credits. The deterministic half of
+ * the suite lives in maya-fixtures.test.mts and needs neither.
+ *
+ *   pnpm test:live
  */
 import {
   BridgeSession,
@@ -16,7 +19,7 @@ import {
   toolCalls,
   visibleText,
   type ThreadPart,
-} from "./harness.ts";
+} from "./harness.mts";
 
 const env = loadEnv();
 const APP_URL = env.APP_URL ?? "http://localhost:3000";
@@ -32,7 +35,23 @@ type Case = {
   run: (session: BridgeSession) => Promise<void>;
 };
 
-const results: { name: string; ok: boolean; detail?: string }[] = [];
+type Status = "pass" | "fail" | "skip";
+
+const results: { name: string; status: Status; detail?: string }[] = [];
+
+/**
+ * The AI Gateway rate-limits free-tier traffic per model. That says nothing
+ * about Maya's behaviour, so it is reported as skipped rather than failed.
+ * Every other error still fails the run.
+ */
+const RATE_LIMIT_PATTERN = /GatewayRateLimitError|rate-limited|rate limit/i;
+
+function isExternalRateLimit(session: BridgeSession, error: unknown): boolean {
+  const detail = `${session.lastFailure ?? ""} ${
+    error instanceof Error ? error.message : String(error)
+  }`;
+  return RATE_LIMIT_PATTERN.test(detail);
+}
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -173,18 +192,35 @@ try {
     const session = new BridgeSession(APP_URL, user.cookie);
     try {
       await testCase.run(session);
-      results.push({ name: testCase.name, ok: true });
-      console.log(`PASS  ${testCase.name}`);
+      results.push({ name: testCase.name, status: "pass" });
+      console.log(`PASS     ${testCase.name}`);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      results.push({ name: testCase.name, ok: false, detail });
-      console.log(`FAIL  ${testCase.name}\n      ${detail}`);
+
+      if (isExternalRateLimit(session, error)) {
+        results.push({ name: testCase.name, status: "skip", detail });
+        console.log(
+          `SKIPPED  ${testCase.name}\n         external rate limit — not a functional failure`
+        );
+        continue;
+      }
+
+      results.push({ name: testCase.name, status: "fail", detail });
+      console.log(`FAIL     ${testCase.name}\n         ${detail}`);
     }
   }
 } finally {
   await user.remove();
 }
 
-const failed = results.filter((result) => !result.ok);
-console.log(`\n${results.length - failed.length}/${results.length} passed`);
+const passed = results.filter((result) => result.status === "pass");
+const skipped = results.filter((result) => result.status === "skip");
+const failed = results.filter((result) => result.status === "fail");
+
+console.log(
+  `\n${passed.length} passed, ${skipped.length} skipped, ${failed.length} failed` +
+    (skipped.length > 0
+      ? "\nSkips are external rate limits. Re-run when the model quota allows."
+      : "")
+);
 process.exit(failed.length === 0 ? 0 : 1);
