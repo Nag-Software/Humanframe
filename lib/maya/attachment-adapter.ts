@@ -18,7 +18,7 @@ const isImage = (file: File) => file.type.startsWith("image/");
  * gjør dem om til image-/file-parts som modellen kan lese.
  */
 export function createSupabaseAttachmentAdapter(
-  getConversationId: () => string | undefined
+  getThreadId: () => string | undefined
 ): AttachmentAdapter {
   return {
     accept:
@@ -38,9 +38,9 @@ export function createSupabaseAttachmentAdapter(
     async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
       const body = new FormData();
       body.append("file", attachment.file);
-      const conversationId = getConversationId();
-      if (conversationId) {
-        body.append("conversationId", conversationId);
+      const threadId = getThreadId();
+      if (threadId) {
+        body.append("threadId", threadId);
       }
 
       const response = await fetch("/api/assistants/maya/upload", {
@@ -79,7 +79,7 @@ export function createSupabaseAttachmentAdapter(
     },
 
     async remove(): Promise<void> {
-      // Filene beholdes i Storage; metadata i maya_attachments er fasiten.
+      // Files stay in Storage; the attachments row is the record of truth.
     },
   };
 }

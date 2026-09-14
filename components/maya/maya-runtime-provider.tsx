@@ -9,11 +9,11 @@ import { createSupabaseAttachmentAdapter } from "@/lib/maya/attachment-adapter";
 import type { MayaMessage } from "@/lib/maya/tools";
 
 export function MayaRuntimeProvider({
-  conversationId,
+  threadId,
   initialMessages,
   children,
 }: {
-  conversationId: string;
+  threadId: string;
   initialMessages: MayaMessage[];
   children: ReactNode;
 }) {
@@ -21,18 +21,18 @@ export function MayaRuntimeProvider({
     () =>
       new AssistantChatTransport<MayaMessage>({
         api: "/api/assistants/maya/chat",
-        body: { conversationId },
+        body: { threadId },
       }),
-    [conversationId]
+    [threadId]
   );
 
   const attachments = useMemo(
-    () => createSupabaseAttachmentAdapter(() => conversationId),
-    [conversationId]
+    () => createSupabaseAttachmentAdapter(() => threadId),
+    [threadId]
   );
 
   const runtime = useChatRuntime<MayaMessage>({
-    id: conversationId,
+    id: threadId,
     transport,
     messages: initialMessages,
     adapters: { attachments },

@@ -19,7 +19,7 @@ export function PageShell({
   className?: string;
 }) {
   return (
-    <div className={cn("mx-auto w-full max-w-5xl px-6 pb-16", className)}>
+    <div className={cn("w-full mx-auto max-w-[1200px] px-6 pb-16", className)}>
       <div className="flex items-start gap-4 pb-8">
         <div className="min-w-0 space-y-1">
           <h1 className="font-display text-2xl tracking-tight">{title}</h1>

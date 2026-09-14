@@ -5,10 +5,19 @@ import {
   streamText,
   toUIMessageStream,
 } from "ai";
+import { z } from "zod";
 
-import { mayaTools, type MayaMessage } from "@/lib/maya/tools";
+import { errorFields, logger } from "@/lib/logger";
 import { mayaModel } from "@/lib/maya/model";
-import { ensureConversation, saveMessages } from "@/lib/maya/store";
+import { mayaTools, type MayaMessage } from "@/lib/maya/tools";
+import { getAssistantBySlug } from "@/server/db/repositories/assistants";
+import {
+  getSourceTimestamps,
+  writeMessages,
+  type MessageWrite,
+} from "@/server/db/repositories/messages";
+import { ensureThread, touchThread } from "@/server/db/repositories/threads";
+import { getRequestScope } from "@/server/db/request-scope";
 
 export const maxDuration = 60;
 
@@ -29,13 +38,56 @@ Verktøy:
 
 Du kan motta bilder og dokumenter fra brukeren – les dem før du svarer.`;
 
+const bodySchema = z.object({
+  messages: z.array(z.unknown()),
+  threadId: z.uuid(),
+});
+
 export async function POST(req: Request) {
-  const body = (await req.json()) as {
-    messages: MayaMessage[];
-    conversationId?: string;
-  };
-  const { messages } = body;
-  const conversationId = body.conversationId;
+  const scope = await getRequestScope();
+  if (!scope) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const parsed = bodySchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return Response.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
+  const messages = parsed.data.messages as MayaMessage[];
+  const threadId = parsed.data.threadId;
+
+  const assistant = await getAssistantBySlug(
+    scope.client,
+    scope.workspaceId,
+    "maya"
+  );
+  if (!assistant) {
+    return Response.json({ error: "Assistant not found" }, { status: 404 });
+  }
+
+  // Claim the thread before streaming: this establishes ownership and lets row
+  // level security reject a thread from another workspace before any model
+  // tokens are spent.
+  const firstUserText = messages
+    .find((message) => message.role === "user")
+    ?.parts.find((part) => part.type === "text")?.text;
+
+  try {
+    await ensureThread(scope, {
+      threadId,
+      assistantId: assistant.id,
+      title: firstUserText,
+      channel: "chat",
+    });
+  } catch (error) {
+    logger.warn("maya.thread_claim_failed", {
+      threadId,
+      workspaceId: scope.workspaceId,
+      ...errorFields(error),
+    });
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const result = streamText({
     model: mayaModel(),
@@ -53,21 +105,51 @@ export async function POST(req: Request) {
       sendReasoning: true,
       originalMessages: messages,
       onError: (error) => {
-        console.error("[maya] stream error", error);
+        logger.error("maya.stream_error", {
+          workspaceId: scope.workspaceId,
+          ...errorFields(error),
+        });
         return "Noe gikk galt under genereringen. Prøv igjen.";
       },
       onEnd: async ({ messages: finalMessages }) => {
-        if (!conversationId) {
-          return;
-        }
-        const firstUserText = finalMessages
-          .find((message) => message.role === "user")
-          ?.parts.find((part) => part.type === "text")?.text;
+        // The whole parts structure is stored — text, files, sources, tool
+        // calls and approval state are kept as they are.
+        //
+        // The AI SDK resends the full transcript every turn without stable
+        // per-message timestamps, so known messages keep the timestamp they
+        // already have and only new ones get a fresh, monotonic one. That
+        // keeps the (thread_id, source_message_id, created_at) upsert
+        // idempotent. eve hooks will carry their own event timestamps.
+        const known = await getSourceTimestamps(scope, threadId);
+        let nextMillis = Date.now();
 
-        await ensureConversation(conversationId, firstUserText);
-        // Hele parts-strukturen lagres – tekst, filer, kilder, verktøykall
-        // og godkjenningstilstand beholdes som de er.
-        await saveMessages(conversationId, finalMessages);
+        const writes: MessageWrite[] = finalMessages.map((message) => {
+          const existing = known.get(message.id);
+          const createdAt = existing ?? new Date(nextMillis++).toISOString();
+          return {
+            threadId,
+            assistantId: assistant.id,
+            channel: "chat" as const,
+            role: message.role,
+            content: message.parts,
+            metadata: message.metadata,
+            sourceMessageId: message.id,
+            createdAt,
+          };
+        });
+
+        try {
+          await writeMessages(scope, writes);
+          const lastCreatedAt = writes.at(-1)?.createdAt;
+          if (lastCreatedAt) {
+            await touchThread(scope, threadId, lastCreatedAt);
+          }
+        } catch (error) {
+          logger.error("maya.persist_turn_failed", {
+            threadId,
+            ...errorFields(error),
+          });
+        }
       },
     }),
   });

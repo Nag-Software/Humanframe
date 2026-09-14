@@ -17,7 +17,7 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 pb-16">
+    <div className="mx-auto w-full max-w-[1200px] px-6 pb-16">
       <h1 className="font-display pb-6 text-2xl tracking-tight">Innstillinger</h1>
       <nav className="border-border/60 mb-8 flex gap-1 border-b">
         {TABS.map((tab) => {

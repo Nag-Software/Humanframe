@@ -12,25 +12,14 @@ import {
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar"
-import { GalleryVerticalEndIcon, TerminalSquareIcon, Settings2Icon, CalendarDaysIcon, BrainIcon, ListTodoIcon, LayoutDashboardIcon } from "lucide-react"
+import { TerminalSquareIcon, Settings2Icon, CalendarDaysIcon, ListTodoIcon, LayoutDashboardIcon } from "lucide-react"
+import Image from "next/image"
 
-// This is sample data.
+import { useTranslations } from "@/components/i18n-provider"
+import { DEFAULT_PLAN, type PlanId } from "@/lib/subscription"
+
+// Navigation is static. User comes from the session.
 const data = {
-  user: {
-    name: "shadcn",
-    email: "m@example.com",
-    avatar: "/avatars/shadcn.jpg",
-  },
-  teams: [
-    {
-      name: "Humanframe",
-      logo: (
-        <GalleryVerticalEndIcon
-        />
-      ),
-      plan: "Free",
-    }
-  ],
   navMain: [
     {
       title: "Overview",
@@ -100,17 +89,42 @@ const data = {
   ]
 }
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+export function AppSidebar({
+  user,
+  plan = DEFAULT_PLAN,
+  ...props
+}: React.ComponentProps<typeof Sidebar> & {
+  user: { name: string; email: string; avatar: string }
+  plan?: PlanId
+}) {
+  const t = useTranslations()
+
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
-        <TeamSwitcher teams={data.teams} />
+        <TeamSwitcher
+          teams={[
+            {
+              name: "Humanframe",
+              logo: (
+                <Image
+                  src="/icon.png"
+                  alt="Humanframe"
+                  width={64}
+                  height={64}
+                  className="size-8 bg-white"
+                />
+              ),
+              plan: t.nav.plans[plan],
+            },
+          ]}
+        />
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={data.user} />
+        <NavUser user={user} />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

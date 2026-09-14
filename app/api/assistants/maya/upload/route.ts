@@ -1,70 +1,101 @@
-import { getSupabaseAdmin, MAYA_BUCKET } from "@/lib/supabase/server";
-import { recordAttachment } from "@/lib/maya/store";
+import { z } from "zod";
+
+import { errorFields, logger } from "@/lib/logger";
+import { MAYA_BUCKET } from "@/lib/supabase/server";
+import { recordAttachment } from "@/server/db/repositories/attachments";
+import { getRequestScope } from "@/server/db/request-scope";
 
 const MAX_SIZE = 20 * 1024 * 1024;
+const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 30;
+
+// Mirrors the accept list in the composer's attachment adapter.
+const ALLOWED_MEDIA_TYPES = [
+  /^image\/(png|jpeg|gif|webp|avif|heic)$/,
+  /^application\/pdf$/,
+  /^application\/json$/,
+  /^text\/(plain|markdown|csv)$/,
+];
+
+const threadIdSchema = z.uuid();
 
 export async function POST(req: Request) {
+  const scope = await getRequestScope();
+  if (!scope) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const form = await req.formData();
   const file = form.get("file");
-  const conversationId = form.get("conversationId");
+  const rawThreadId = form.get("threadId");
 
   if (!(file instanceof File)) {
     return Response.json({ error: "Mangler fil" }, { status: 400 });
   }
   if (file.size > MAX_SIZE) {
-    return Response.json({ error: "Filen er for stor (maks 20 MB)" }, {
-      status: 413,
-    });
+    return Response.json(
+      { error: "Filen er for stor (maks 20 MB)" },
+      { status: 413 }
+    );
   }
 
-  const db = getSupabaseAdmin();
-
-  // Uten Supabase faller vi tilbake til data-URL, slik at vedlegg fungerer
-  // lokalt uten lagring.
-  if (!db) {
-    const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
-    return Response.json({
-      url: `data:${file.type || "application/octet-stream"};base64,${base64}`,
-      filename: file.name,
-      mediaType: file.type,
-      size: file.size,
-      persisted: false,
-    });
+  const mediaType = file.type || "application/octet-stream";
+  if (!ALLOWED_MEDIA_TYPES.some((pattern) => pattern.test(mediaType))) {
+    return Response.json({ error: "Filtypen støttes ikke" }, { status: 415 });
   }
 
-  const safeName = file.name.replace(/[^\w.\-]+/g, "_");
-  const path = `${conversationId ?? "uten-samtale"}/${crypto.randomUUID()}-${safeName}`;
+  const parsedThread = threadIdSchema.safeParse(rawThreadId);
+  const threadId = parsedThread.success ? parsedThread.data : null;
 
-  const { error } = await db.storage
-    .from(MAYA_BUCKET)
-    .upload(path, await file.arrayBuffer(), {
-      contentType: file.type || "application/octet-stream",
-      upsert: false,
+  // The path is built server-side and always starts with the workspace id —
+  // the storage policy authorizes on that first segment.
+  const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 100);
+  const path = `${scope.workspaceId}/${threadId ?? "unassigned"}/${crypto.randomUUID()}-${safeName}`;
+
+  const storage = scope.client.storage.from(MAYA_BUCKET);
+  const { error: uploadError } = await storage.upload(
+    path,
+    await file.arrayBuffer(),
+    { contentType: mediaType, upsert: false }
+  );
+
+  if (uploadError) {
+    logger.error("maya.upload_failed", {
+      workspaceId: scope.workspaceId,
+      ...errorFields(uploadError),
     });
-
-  if (error) {
-    console.error("[maya] upload failed", error);
     return Response.json({ error: "Opplasting feilet" }, { status: 500 });
   }
 
-  const {
-    data: { publicUrl },
-  } = db.storage.from(MAYA_BUCKET).getPublicUrl(path);
+  // The bucket is private. The model needs a fetchable URL, so we mint a
+  // signed one for this turn. The URL is never stored: the attachment row
+  // keeps the storage path, and later reads re-sign from that.
+  const { data: signed, error: signError } = await storage.createSignedUrl(
+    path,
+    SIGNED_URL_TTL_SECONDS
+  );
 
-  await recordAttachment({
-    conversationId: typeof conversationId === "string" ? conversationId : null,
+  if (signError || !signed) {
+    logger.error("maya.sign_url_failed", {
+      workspaceId: scope.workspaceId,
+      ...errorFields(signError),
+    });
+    return Response.json({ error: "Opplasting feilet" }, { status: 500 });
+  }
+
+  const attachmentId = await recordAttachment(scope, {
+    threadId,
     filename: file.name,
-    mediaType: file.type || "application/octet-stream",
+    mediaType,
     size: file.size,
     storagePath: path,
-    url: publicUrl,
   });
 
   return Response.json({
-    url: publicUrl,
+    id: attachmentId,
+    url: signed.signedUrl,
+    path,
     filename: file.name,
-    mediaType: file.type,
+    mediaType,
     size: file.size,
-    persisted: true,
   });
 }
