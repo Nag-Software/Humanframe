@@ -205,7 +205,7 @@ function toOptionKind(
   if (id === "approve" || id === "allow" || id === "yes") {
     return "allow-once";
   }
-  if (id === "deny" || id === "reject" || id === "no") {
+  if (id === "cancel" || id === "deny" || id === "reject" || id === "no") {
     return "reject-once";
   }
   return style === "danger" ? "reject-once" : `_${id}`;

@@ -76,7 +76,8 @@ export function EveRuntimeProvider({
       await respond([
         {
           requestId: approvalId,
-          optionId: optionId ?? (approved ? "approve" : "deny"),
+          // eve's approval prompt offers `approve` / `cancel`.
+          optionId: optionId ?? (approved ? "approve" : "cancel"),
           ...(text ? { text } : {}),
         },
       ]);

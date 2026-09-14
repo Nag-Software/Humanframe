@@ -1,4 +1,4 @@
-import { Client, type ClientSession } from "eve/client";
+import { Client, type ClientSession, type MessageStreamEvent } from "eve/client";
 import type { UserContent } from "ai";
 
 import { serverEnv } from "@/lib/env";
@@ -86,7 +86,7 @@ class EveRuntime implements AgentRuntime {
     const optionId =
       input.decision.decision === "approve"
         ? (input.decision.optionId ?? "approve")
-        : "deny";
+        : "cancel";
 
     await this.#session(input.sessionId).respond([
       {
@@ -161,77 +161,75 @@ function toUserContent(parts: RuntimeInput[]): string | UserContent {
   );
 }
 
-type StreamEvent = { type: string; data?: Record<string, unknown> };
-
 /** eve's wire events → Humanframe's channel-neutral events. */
-function toRuntimeEvent(event: StreamEvent): RuntimeEvent | null {
-  const data = event.data ?? {};
-
+function toRuntimeEvent(event: MessageStreamEvent): RuntimeEvent | null {
   switch (event.type) {
     case "message.appended":
-      return { type: "text.delta", text: String(data.messageDelta ?? "") };
+      return { type: "text.delta", text: event.data.messageDelta };
 
     case "message.completed":
-      return data.message == null
+      // A null message is eve's marker for an intentionally silent turn.
+      return event.data.message === null
         ? null
-        : { type: "text.complete", text: String(data.message) };
+        : { type: "text.complete", text: event.data.message };
 
     case "reasoning.appended":
-      return { type: "reasoning.delta", text: String(data.reasoningDelta ?? "") };
+      return { type: "reasoning.delta", text: event.data.reasoningDelta };
 
     case "actions.requested": {
-      const actions = (data.actions ?? []) as {
-        callId?: string;
-        toolName?: string;
-        input?: unknown;
-      }[];
-      const first = actions[0];
-      if (!first?.callId || !first.toolName) {
+      const action = event.data.actions.find(
+        (candidate) => candidate.kind === "tool-call"
+      );
+      if (!action) {
         return null;
       }
       return {
         type: "tool.call",
-        callId: first.callId,
-        name: first.toolName,
-        input: first.input,
+        callId: action.callId,
+        name: action.toolName,
+        input: action.input,
       };
     }
 
-    case "action.result":
+    case "action.result": {
+      const result = event.data.result;
+      if (result.kind !== "tool-result") {
+        return null;
+      }
       return {
         type: "tool.result",
-        callId: String(data.callId ?? ""),
-        output: data.output,
-        isError: Boolean(data.isError),
+        callId: result.callId,
+        output: result.output,
+        isError: event.data.status !== "completed",
       };
+    }
 
     case "input.requested": {
-      const requests = (data.requests ?? []) as {
-        requestId?: string;
-        prompt?: string;
-        action?: { callId?: string; toolName?: string; input?: unknown };
-      }[];
-      const request = requests[0];
-      if (!request?.requestId) {
+      const request = event.data.requests[0];
+      if (!request) {
         return null;
       }
       return {
         type: "approval.requested",
         requestId: request.requestId,
-        callId: request.action?.callId ?? "",
-        toolName: request.action?.toolName ?? "",
-        input: request.action?.input,
-        prompt: request.prompt ?? "",
+        callId: request.action.callId,
+        toolName: request.action.toolName,
+        input: request.action.input,
+        prompt: request.prompt,
         risk: "execute_with_approval",
       };
     }
 
     case "turn.started":
-      return { type: "run.status", status: "started", turnId: String(data.turnId ?? "") };
+      return { type: "run.status", status: "started", turnId: event.data.turnId };
     case "session.waiting":
       return { type: "run.status", status: "waiting" };
     case "turn.completed":
-      return { type: "run.status", status: "completed", turnId: String(data.turnId ?? "") };
+      return {
+        type: "run.status",
+        status: "completed",
+        turnId: event.data.turnId,
+      };
     case "turn.cancelled":
       return { type: "run.status", status: "cancelled" };
     case "turn.failed":
@@ -239,10 +237,7 @@ function toRuntimeEvent(event: StreamEvent): RuntimeEvent | null {
       return {
         type: "run.status",
         status: "failed",
-        error: {
-          code: String(data.code ?? "unknown"),
-          message: String(data.message ?? "The run failed"),
-        },
+        error: { code: event.data.code, message: event.data.message },
       };
 
     default:
