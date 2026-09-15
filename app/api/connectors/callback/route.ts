@@ -6,7 +6,7 @@ import {
   bindAccount,
   consumeAuthorizationState,
 } from "@/server/connectors/accounts";
-import { readConnectedAccount } from "@/server/connectors/composio";
+import { readOwnedAccount } from "@/server/connectors/composio";
 
 /**
  * Where an OAuth round lands.
@@ -20,7 +20,7 @@ import { readConnectedAccount } from "@/server/connectors/composio";
  *     single-use so a replay binds nothing.
  *  2. The caller must still be signed in as that same user. A state stolen
  *     from a browser history is useless in someone else's session.
- *  3. Composio must agree the account is filed under that user, and is active.
+ *  3. Composio must list that account under this user, and it must be active.
  *     Without this an attacker could pass their own `connected_account_id` and
  *     have someone else's workspace bound to a mailbox they control.
  */
@@ -66,23 +66,21 @@ export async function GET(req: Request) {
   }
 
   try {
-    const account = await readConnectedAccount(connectedAccountId);
+    // Ownership is proved by listing this user's accounts and finding the
+    // id — `connectedAccounts.get` carries no user field, so a fetch-by-id
+    // cannot tell us who authorised it.
+    const account = await readOwnedAccount({
+      connectedAccountId,
+      composioUserId: claim.userId,
+      provider: claim.provider,
+    });
 
-    // The broker's own view has to match ours, or nothing is written.
     if (!account || account.status !== "active") {
       logger.warn("connector.callback_account_not_active", {
         provider: claim.provider,
         status: account?.status ?? "missing",
       });
       redirect("/settings/connections?error=not_active");
-    }
-
-    if (account.userId !== claim.userId) {
-      // Someone tried to bind an account that is not theirs.
-      logger.error("connector.callback_ownership_mismatch", {
-        provider: claim.provider,
-      });
-      redirect("/settings/connections?error=not_your_account");
     }
 
     if (account.toolkit && account.toolkit !== claim.provider) {

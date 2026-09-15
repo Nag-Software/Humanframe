@@ -1,7 +1,6 @@
 import {
-  extractCandidates,
-  mirrorFactsIntoMemories,
-  storeCandidates,
+  learnFromExchange,
+  MIN_USER_CHARACTERS,
 } from "@/agent/lib/memory-extraction";
 import { logger } from "@/lib/logger";
 import type { CallBinding } from "@/server/call/binding";
@@ -72,8 +71,6 @@ export async function recordCallTurn(
     : null;
 }
 
-const MIN_USER_CHARACTERS = 12;
-
 /**
  * Learns from a finished exchange, exactly once.
  *
@@ -90,36 +87,29 @@ export async function learnFromCallExchange(
     return;
   }
 
-  const scope = {
-    client: binding.client,
-    workspaceId: binding.workspaceId,
-    assistantId: binding.assistantId,
-    userId: binding.userId,
-  };
-
-  const source = {
-    threadId: binding.threadId,
-    messageId: exchange.messageId,
-    occurredAt: new Date().toISOString(),
-  };
-
   try {
-    const candidates = await extractCandidates({
+    const result = await learnFromExchange({
       userText: exchange.userText,
       assistantText: exchange.assistantText,
+      scope: {
+        client: binding.client,
+        workspaceId: binding.workspaceId,
+        assistantId: binding.assistantId,
+        userId: binding.userId,
+      },
+      source: {
+        threadId: binding.threadId,
+        messageId: exchange.messageId,
+        occurredAt: new Date().toISOString(),
+      },
     });
 
-    if (candidates.length === 0) {
-      return;
+    if (result) {
+      logger.info("call.memory_extracted", {
+        callSessionId: binding.callSessionId,
+        ...result,
+      });
     }
-
-    const result = await storeCandidates(scope, candidates, source);
-    await mirrorFactsIntoMemories(scope, candidates, source);
-
-    logger.info("call.memory_extracted", {
-      callSessionId: binding.callSessionId,
-      ...result,
-    });
   } catch (error) {
     // Losing a memory must never break a call.
     logger.error("call.memory_extraction_failed", {

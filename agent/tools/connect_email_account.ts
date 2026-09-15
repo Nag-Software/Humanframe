@@ -41,12 +41,15 @@ export default defineTool({
 
     // Imported lazily: the eve bundle should not carry the connector stack
     // unless a call actually reaches it.
-    const [{ beginAuthorization }, { createAuthorizationLink }, { appOrigin }] =
-      await Promise.all([
-        import("../../server/connectors/accounts"),
-        import("../../server/connectors/composio"),
-        import("../lib/email-template"),
-      ]);
+    const [
+      { beginAuthorization, bindAccount },
+      { createAuthorizationLink },
+      { appOrigin },
+    ] = await Promise.all([
+      import("../../server/connectors/accounts"),
+      import("../../server/connectors/composio"),
+      import("../lib/email-template"),
+    ]);
 
     try {
       const state = await beginAuthorization({
@@ -56,13 +59,33 @@ export default defineTool({
       });
 
       const origin = appOrigin(process.env);
-      const { redirectUrl } = await createAuthorizationLink({
+      const outcome = await createAuthorizationLink({
         provider: input.provider,
         composioUserId: scope.userId,
         callbackUrl: `${origin}/api/connectors/callback?state=${state}`,
       });
 
-      return { offered: true, provider: input.provider, redirectUrl };
+      if (outcome.kind === "already_connected") {
+        await bindAccount({
+          workspaceId: scope.workspaceId,
+          userId: scope.userId,
+          provider: input.provider,
+          composioUserId: scope.userId,
+          connectedAccountId: outcome.connectedAccountId,
+          accountEmail: outcome.email,
+        });
+        return {
+          offered: false,
+          provider: input.provider,
+          note: "This mailbox is already connected.",
+        };
+      }
+
+      return {
+        offered: true,
+        provider: input.provider,
+        redirectUrl: outcome.redirectUrl,
+      };
     } catch (error) {
       console.error(
         JSON.stringify({

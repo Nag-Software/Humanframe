@@ -1,25 +1,22 @@
 import { defineHook } from "eve/hooks";
 
+import { MIN_USER_CHARACTERS } from "../lib/memory-extraction";
 import {
-  extractCandidates,
-  mirrorFactsIntoMemories,
-  storeCandidates,
-} from "../lib/memory-extraction";
-import { resolveMemoryScope } from "../lib/session-scope";
+  extractTurnMemory,
+  runExtractTurnMemory,
+} from "../lib/memory-extraction-workflow";
 
 /**
  * Learns from a finished exchange.
  *
- * It runs after `turn.completed`, never before the answer is delivered, and it
- * is deliberately not awaited by anything the user is waiting on. A failure
- * here loses a memory; it must never lose a reply.
+ * eve awaits hook handlers before it emits `session.waiting`, which is when
+ * the composer unlocks. The model call therefore cannot live in this handler:
+ * it is started as a detached workflow, and a failure there loses a memory
+ * rather than the reply the user is looking at.
  */
-const MIN_USER_CHARACTERS = 12;
-
 type TurnBuffer = {
   userText: string;
   assistantText: string;
-  threadId: string | null;
   /** eve's own event id, resolved to our message row before it is stored. */
   eventId: string | null;
   occurredAt: string;
@@ -36,12 +33,24 @@ function bufferFor(sessionId: string, turnId: string): TurnBuffer {
   const created: TurnBuffer = {
     userText: "",
     assistantText: "",
-    threadId: null,
     eventId: null,
     occurredAt: new Date().toISOString(),
   };
   buffers.set(key, created);
   return created;
+}
+
+function supabaseUserId(session: {
+  auth: {
+    initiator?: { principalId?: string; authenticator?: string } | null;
+    current?: { principalId?: string; authenticator?: string } | null;
+  };
+}): string | undefined {
+  const principal = session.auth.initiator ?? session.auth.current;
+  if (principal?.authenticator !== "supabase" || !principal.principalId) {
+    return undefined;
+  }
+  return principal.principalId;
 }
 
 export default defineHook({
@@ -75,64 +84,35 @@ export default defineHook({
         return;
       }
 
-      const scope = await resolveMemoryScope(ctx.session);
-      if (!scope) {
+      const userId = supabaseUserId(ctx.session);
+      if (!userId) {
         return;
       }
 
-      const { data: thread } = await scope.client
-        .from("threads")
-        .select("id")
-        .eq("eve_session_id", ctx.session.id)
-        .maybeSingle<{ id: string }>();
-
-      // persist-turn stores eve's event id on the message row, so the event id
-      // the hook carries resolves to the message a memory came from.
-      const { data: message } = buffer.eventId
-        ? await scope.client
-            .from("messages")
-            .select("id")
-            .eq("thread_id", thread?.id ?? "")
-            .eq("source_message_id", buffer.eventId)
-            .maybeSingle<{ id: string }>()
-        : { data: null };
-
-      const source = {
-        threadId: thread?.id ?? null,
-        messageId: message?.id ?? null,
+      const input = {
+        sessionId: ctx.session.id,
+        userId,
+        userText: buffer.userText,
+        assistantText: buffer.assistantText,
+        eventId: buffer.eventId,
         occurredAt: buffer.occurredAt,
       };
 
+      // `start()` cannot live in the workflow module: the bundle forbids
+      // importing `workflow/api` from a `"use workflow"` file.
       try {
-        const candidates = await extractCandidates({
-          userText: buffer.userText,
-          assistantText: buffer.assistantText,
-        });
-
-        if (candidates.length === 0) {
-          return;
-        }
-
-        const result = await storeCandidates(scope, candidates, source);
-        await mirrorFactsIntoMemories(scope, candidates, source);
-
-        console.log(
-          JSON.stringify({
-            level: "info",
-            event: "memory.extracted",
-            sessionId: ctx.session.id,
-            ...result,
-          })
-        );
+        const { start } = await import("workflow/api");
+        await start(extractTurnMemory, [input]);
       } catch (error) {
         console.error(
           JSON.stringify({
             level: "error",
-            event: "memory.extraction_failed",
+            event: "memory.extraction_start_failed",
             sessionId: ctx.session.id,
             message: error instanceof Error ? error.message : String(error),
           })
         );
+        void runExtractTurnMemory(input);
       }
     },
   },

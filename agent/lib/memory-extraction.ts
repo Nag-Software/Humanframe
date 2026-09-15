@@ -69,12 +69,14 @@ export async function extractCandidates(input: {
   return object.memories;
 }
 
-/** Stable across retries and re-extractions of the same statement. */
-export function dedupeKey(candidate: Candidate): string {
-  const subject = (candidate.subject ?? "self").trim().toLowerCase() || "self";
-  const attribute = candidate.attribute.trim().toLowerCase();
-  return `${candidate.kind}:${subject}:${attribute}`;
-}
+/** Below this, extraction is skipped rather than calling the model for nothing. */
+export const MIN_USER_CHARACTERS = 12;
+
+export type MemorySource = {
+  threadId: string | null;
+  messageId: string | null;
+  occurredAt: string;
+};
 
 export type StoreResult = {
   stored: number;
@@ -82,6 +84,41 @@ export type StoreResult = {
   skipped: number;
   entities: number;
 };
+
+/**
+ * The full extract-and-store pass. Callers that sit on a user-visible path
+ * must not await this: it is a model call plus embeddings.
+ */
+export async function learnFromExchange(input: {
+  userText: string;
+  assistantText: string;
+  scope: MemoryScope;
+  source: MemorySource;
+}): Promise<StoreResult | null> {
+  if (input.userText.trim().length < MIN_USER_CHARACTERS) {
+    return null;
+  }
+
+  const candidates = await extractCandidates({
+    userText: input.userText,
+    assistantText: input.assistantText,
+  });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const result = await storeCandidates(input.scope, candidates, input.source);
+  await mirrorFactsIntoMemories(input.scope, candidates, input.source);
+  return result;
+}
+
+/** Stable across retries and re-extractions of the same statement. */
+export function dedupeKey(candidate: Candidate): string {
+  const subject = (candidate.subject ?? "self").trim().toLowerCase() || "self";
+  const attribute = candidate.attribute.trim().toLowerCase();
+  return `${candidate.kind}:${subject}:${attribute}`;
+}
 
 export async function storeCandidates(
   scope: MemoryScope,

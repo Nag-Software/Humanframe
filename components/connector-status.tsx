@@ -96,8 +96,15 @@ function ConnectorCard({
         throw new Error("Failed to create authorization link")
       }
 
-      const data = (await res.json()) as { redirectUrl: string }
-      window.location.href = data.redirectUrl
+      const data = (await res.json()) as {
+        redirectUrl?: string
+        alreadyConnected?: boolean
+      }
+      if (data.redirectUrl) {
+        window.location.href = data.redirectUrl
+        return
+      }
+      window.location.reload()
     } catch (error) {
       console.error("Failed to connect:", error)
       alert("Failed to create connection link")
