@@ -1,6 +1,6 @@
 # Phase 4 — Goals, commitments, background work and the heartbeat
 
-Status: **revision 2, approved architecture, not implemented.** Written against
+Status: **revision 3, approved architecture, partly implemented.** Written against
 the code at `3dc7496` and the 15 applied migrations.
 
 The core flow this has to deliver:
@@ -9,7 +9,22 @@ The core flow this has to deliver:
 > schedules a durable workflow, and wakes Maya at the right moment. She then
 > judges whether to act, prepare, ask for approval, or just notify.
 
-## 0. What revision 2 changed
+## 0a. What revision 3 changed
+
+- **The detached durable timer is the primary trigger, not an optimisation.**
+  Cron cadence no longer bounds when a commitment fires. Each commitment gets
+  its own durable workflow that sleeps until `due_at` and then enters the same
+  atomic claim (§5.5). The heartbeat becomes what its name says: a reconciler
+  for timers that were lost, never the only clock.
+- **The hidden system marker is not, on its own, duplicate protection.** It is
+  one of three defences, and the weakest, because it reads a projection written
+  asynchronously by a hook. §5.2 now states the residual risk plainly and adds
+  the two synchronous defences that actually carry the weight.
+- **Every action carries a stable business idempotency key** (§10.1), not just
+  every delivery. A key derived from the business subject — never a fresh uuid,
+  never a timestamp — is what makes a repeated wake unable to repeat an effect.
+
+## 0b. What revision 2 changed
 
 Six corrections were required before implementation. Two of them change the
 mechanism, not just the detail:
@@ -39,7 +54,7 @@ Read before designing anything, because most of phase 4 is composition
 
 | Capability | eve surface | Used for |
 |---|---|---|
-| Durable timer that survives restart and deploy | `defineWorkflowTool` + `await sleep()` from `workflow` | Optional precision trigger (§5.5), and `run_background_task` |
+| Durable timer that survives restart and deploy | a detached `"use workflow"` function + `await sleep()`, started with `start()` | The primary commitment trigger (§5.5) |
 | Work that outlives the turn | `execution:"background"` → `{status:"working", taskId}` | Criterion 3 |
 | Waking the agent with a result | Background completion notification starts a parent turn | Criterion 3 and 6 for *tasks* — deliberately **not** for commitments (§7) |
 | Human approval inside long work | `ctx.ask(...)` — the `input.requested` event our approval card already renders | Criterion 7, reusing phase 2 UI |
@@ -63,11 +78,16 @@ Three eve facts that constrain everything below:
 Supabase        permanent truth       goals, commitments, deliveries,
    ▲                                  tasks, events. Workspace-isolated.
    │ idempotent writes from "use step" functions and hooks
-Workflows       the mechanism         durable sleep, parked approval,
-   │                                  retried step. Owned by eve.
+Workflows       the clock             one detached durable workflow per
+   │                                  commitment: sleeps to due_at, then
+   │                                  enters the claim. The primary trigger.
    ▼
-Heartbeat       the deliverer         claims due work atomically and delivers
-                                      it. The one path that wakes Maya.
+Heartbeat       the reconciler        sweeps for commitments whose timer never
+                                      fired, and for deliveries left mid-flight.
+                                      A safety net, not the schedule.
+
+Both triggers enter the same function. There is exactly one claim, one
+delivery protocol, and one place that decides whether a wake happens at all.
 ```
 
 `agent_runs` stays Humanframe's business projection: status, timing, cost, and
@@ -79,8 +99,8 @@ File placement (approved):
 
 | Planned module | Location | Kind |
 |---|---|---|
-| `heartbeat.ts` | `agent/schedules/heartbeat.ts` | `defineSchedule({cron})` handler |
-| `commitment-followup.ts` | `agent/lib/commitments.ts` + `agent/lib/delivery.ts` | store + delivery protocol, shared by every caller |
+| `heartbeat.ts` | `agent/schedules/heartbeat.ts` | `defineSchedule({cron})` handler — reconciler only |
+| `commitment-followup.ts` | `agent/lib/commitments.ts` + `agent/lib/delivery.ts` + `agent/lib/commitment-timer.ts` | store, delivery protocol and the detached timer, shared by every caller |
 | `background-task.ts` | `agent/tools/run_background_task.ts` + `agent/lib/background-task.ts` | background workflow tool + steps |
 | `approval-flow.ts` | `agent/lib/approval-flow.ts` | helper over `ctx.ask` and `approval: always()` |
 
@@ -314,15 +334,39 @@ The delivery then runs write-ahead:
 exists. A crash after 2 but before 3 is the ambiguous case. A crash after 3
 leaves a `sent` row that reconciliation turns into `confirmed`.
 
-**This is at-least-once, not exactly-once.** eve's
-`POST /eve/v1/session/:sessionId` takes no idempotency key — `operationId` is a
-create-only facility — so the receiver offers no documented dedup for
-follow-ups, and no exactly-once claim is made here. What the protocol gives
-instead is: a duplicate is *detectable* (same marker, same `delivery_id`), it is
-*checked for* before every retry, and it is *harmless* if one slips through
-(the wake message is a `system`-channel message the UI does not render; the
-worst case is Maya being woken twice about the same commitment, which §7's
-status check turns into silence the second time).
+**This is at-least-once, and the marker alone does not fix it.**
+
+eve's follow-up route takes no idempotency key — `operationId` is create-only —
+so the receiver offers no deduplication. Three defences stand between that and
+a double wake, in order of how much weight they carry:
+
+1. **The lease** (synchronous, authoritative). Only the lease holder may
+   deliver, so two workers cannot send concurrently. This is the primary
+   defence, and it holds as long as the lease outlives the send — so the send
+   has an explicit timeout, and the lease is set well above it.
+2. **The delivery row's own state** (synchronous, authoritative). A row in
+   `sent` means *this process observed the receiver accept it*. No retry is
+   attempted against a `sent` row; it is confirmed, not resent. Combined with
+   the backoff in `next_attempt_at`, a retry cannot even be attempted until the
+   previous one is definitively over.
+3. **The marker** (asynchronous, advisory). Only for the genuinely ambiguous
+   case: `pending` with attempts spent, where this process never learned the
+   outcome. It reads `messages`, which `persist-turn.ts` writes from a hook —
+   so a send that landed *seconds* ago may not be visible yet, and the marker
+   can report "not landed" when it did.
+
+**The residual risk, stated plainly.** If a send is accepted, the acknowledgement
+is lost, *and* the projection has not caught up by the time the backoff expires,
+a second wake is sent. The window is bounded by the shortest backoff (60s)
+against hook latency (sub-second in practice), so it is small — but it is not
+zero, and it cannot be closed from our side without an idempotency key on the
+receiver.
+
+What that costs when it happens: Maya is woken twice for one commitment. The
+second wake finds the commitment already `delivered` or `done`, and answers in
+one line. It does **not** repeat an action, because actions are keyed
+independently of deliveries (§10.1). The failure mode is a redundant sentence,
+never a duplicate effect.
 
 ### 5.3 Reaching the session, and the marker
 
@@ -380,14 +424,46 @@ history — eve history is not transplantable, and we do not try. Instead:
 - The recap is marked as recollection, not as new user speech, using the same
   wording discipline as the memory package.
 
-### 5.5 Optional: the precision trigger
+### 5.5 The timer: the primary trigger
 
-Cron cadence bounds how late a wake can be. If preflight P1 confirms a durable
-workflow can be started *outside* a session's task tree, a per-commitment
-workflow may `sleep` until `due_at` and then call
-`claim_commitments_for_wake(1, lease, p_id)` — the same claim, the same
-delivery protocol, no second code path. If it cannot, cadence governs precision
-and nothing else changes. It is an optimisation and is built last.
+`schedule_followup` writes the commitment row and then starts **one detached
+durable workflow per commitment** — detached meaning started with `start()`
+from `workflow/api` inside a `"use step"`, so the run belongs to no session's
+task tree. Preflight P1 confirmed such a workflow registers as its own run
+(`workflow//./agent/lib/commitment-timer//commitmentTimer`).
+
+```ts
+export async function commitmentTimer(input: { commitmentId: string; dueAt: string }) {
+  "use workflow";
+  await sleep(untilDue(input.dueAt));
+  await wakeOnce(input.commitmentId);      // "use step"
+}
+```
+
+`wakeOnce` calls `claimCommitmentsForWake(1, lease, commitmentId)` and, if it
+gets the row, runs the delivery protocol in §5.1–5.4. Not a second code path:
+the same claim, the same lease, the same delivery record, the same
+cancellation check.
+
+Being detached is what makes silent cancellation possible. A background task
+attached to the session notifies the parent agent whenever its run ends — so a
+cancelled commitment could not stay quiet. A detached run ends without telling
+anyone: the claim simply returns no row (a cancelled commitment is not in
+`scheduled` or `waking`), the timer returns, and nothing is delivered and no
+turn is started.
+
+**The heartbeat is then a reconciler.** Each tick claims what is due and
+unleased — which, when timers work, is nothing. It exists for the cases the
+timer cannot cover: a run lost to a workflow-storage expiry, a deploy that
+orphaned it, a `start()` that failed after the commitment row was written, or a
+delivery abandoned mid-flight by a crashed worker. Its cadence bounds *recovery*
+latency, not *wake* latency, which is why cron granularity on Hobby stopped
+being a product constraint.
+
+One consequence worth stating: `start()` is not transactional with the row
+write. A crash between them leaves a commitment with no timer — which is
+precisely the case the heartbeat exists for, and why it must keep running even
+once timers are trusted.
 
 ## 6. Internal auth — correction 4
 
@@ -481,6 +557,31 @@ when the user returns.
 | Business transitions | deterministic `idempotency_key` | `unique (workspace_id, idempotency_key)` on `events` |
 | Cross-table tenancy | composite `(id, workspace_id)` FKs | Postgres, on the service-role path too |
 
+### 10.1 Stable business idempotency keys for every action
+
+A delivery being at-least-once is only tolerable because an action is not. Every
+effect Maya performs — an email sent, a calendar event created, a file written,
+an external API called — goes through an effect ledger keyed on **what the
+action is, in business terms**, never on a fresh uuid, a timestamp, or an
+attempt counter:
+
+```
+commitment:<commitment_id>:wake:<wake_seq>:action:<name>
+task:<task_id>:action:<name>
+approval:<approval_id>:grant
+```
+
+The ledger row is claimed before the effect runs and completed after, with the
+same lease-and-reconcile discipline as a delivery: a crashed effect is retried
+after its lease expires, and a completed one is never repeated no matter how
+many times its wake arrives. A key that varies per attempt would make the
+ledger decorative, which is why the shape above is derived entirely from
+identifiers that are stable for the life of the business object.
+
+An effect that cannot be made idempotent on our side — a provider with no
+idempotency key and no way to query for a prior call — does not run
+unattended. It goes through approval (§9) and a person absorbs the ambiguity.
+
 ## 11. Tests
 
 Deterministic, no model calls, mandatory — `pnpm test:commitments`
@@ -497,6 +598,13 @@ Deterministic, no model calls, mandatory — `pnpm test:commitments`
 **Delivery idempotence**
 5. `delivery_id` is stable across attempts; `attempts` increments without
    changing it.
+5a. Two workers racing the same commitment produce **one** visible wake: the
+   loser is refused by the lease and writes nothing.
+5b. A delivery in `sent` is never resent, even when the marker lookup would
+   fail — the row's own state outranks the projection.
+5c. A retry before `next_attempt_at` is refused.
+5d. Two wakes that do arrive (the residual case in §5.2) produce at most one
+   execution of an action, because the effect ledger key is stable (§10.1).
 6. Crash before the send → retry sends once.
 7. Crash after a 2xx but before `sent` → reconciliation finds the marker and
    confirms without resending.
@@ -509,9 +617,11 @@ Deterministic, no model calls, mandatory — `pnpm test:commitments`
 11. Cancelled between claim and send → `abandoned`, lease released, nothing
     sent.
 
-**Auth and isolation**
-12. Wrong `project_id` rejected; wrong `environment` rejected; expired token
-    rejected.
+**Auth and isolation** — these gate internal delivery: it is not enabled until
+they are green
+12. Wrong `project_id` rejected; wrong `environment` rejected (a preview token
+    cannot drive production, or the reverse); expired token rejected;
+    wrong `aud` rejected; a token signed by the wrong key rejected.
 13. A delivery whose target session resolves to another workspace is refused.
 14. Composite FK: a commitment pointing at another workspace's thread,
     assistant or goal is rejected **through the service-role client**.
@@ -537,52 +647,70 @@ in `agent/lib/` that is reachable from a tool compiles with no diagnostics and
 registers as its own workflow in the build output
 (`workflow//./agent/lib/probe-timer//probeTimer`), separate from the tool's own
 `…//execute`. So a run can be started detached from the session's task tree.
-Runtime proof needs a live session and is folded into P3; §5.5 stays optional
-until then.
+Runtime proof is folded into P3. §5.5 depends on it: if a detached run turns
+out not to start at runtime, the timer falls back to the heartbeat and cadence
+bounds wake latency again.
 
 **P2 — types (local). Passes.** `types/workflow.d.ts` containing
 `/// <reference types="eve/workflow-modules" />` makes `workflow` and
 `workflow/api` resolve, without setting `compilerOptions.types` (which would
 stop every other `@types` package from being included automatically).
 
-**P3 — the long-run test, on a real Vercel environment.** This is the one
-assumption the design rests on, and phase 4 is not finished until it passes:
+**P3 — the long-run test, on Vercel Preview.** This is the one assumption the
+design rests on, and phase 4 is not finished until it passes. It runs on
+**Preview**, with Preview-scoped variables. Production keeps
+`NEXT_PUBLIC_MAYA_RUNTIME=ai-sdk` and gets no heartbeat until this is green.
 
-1. Deploy, and start a commitment due in **26 hours** (crossing the Hobby
-   1-day workflow-data retention window).
-2. **Redeploy while it waits**, so the run has to survive a deployment change.
-3. Verify delivery afterwards, into **the same Humanframe thread** — via the
+1. Deploy a preview, and start a commitment due in **26 hours** (crossing the
+   Hobby 1-day workflow-data retention window).
+2. **Redeploy the preview while the timer sleeps**, so the run has to survive a
+   deployment change.
+3. Verify delivery afterwards, into **the same Humanframe `threadId`** — via the
    original session if it is still active, via §5.4 recovery if it is not.
-   Either outcome is a pass for §5.4; only "no delivery" is a failure.
-4. Verify **fresh auth after the wait**: the OIDC token used is minted at send
-   time, and a token captured before the sleep would have failed.
-5. **Rate limit at wake**: force a 429 from the gateway at wake time and
-   confirm exponential backoff, the attempt cap, and that an exhausted delivery
-   lands as `abandoned` rather than a silent loss.
+   Either route is a pass; delivery into a *different* thread, or no delivery,
+   is a failure.
+4. Verify **fresh auth after the wait**: the OIDC token is minted at send time,
+   and a token captured before the sleep would have expired.
+5. **Rate limit at wake**: force a 429 at wake time and confirm exponential
+   backoff, the attempt cap, and that an exhausted delivery lands as
+   `abandoned` rather than a silent loss.
 6. **Failure windows**: kill the process between claim and delivery-row write,
    between write and send, and between a 2xx and `sent` — confirm §5.2 handles
    each without duplicate or loss.
+7. **Timer vs. reconciler**: confirm the timer delivered, and that the
+   heartbeat found nothing to do. Then delete a timer's run and confirm the
+   heartbeat recovers that commitment.
 
-**P4 — cron cadence.** Read back Settings → Cron Jobs after deploy. If minute
-granularity is not available on Hobby, cadence bounds precision (§5.5), not
-function. Pro becomes a production precondition.
+**P4 — cron cadence.** Read back Settings → Cron Jobs after deploy. Now that
+the timer is the primary trigger, cadence bounds only how fast the reconciler
+notices a lost timer — hours is tolerable, a day is not ideal but not broken.
 
-**Blocked right now:** the Vercel project `humanframe` exists but has exactly
-one environment variable (`NEXT_PUBLIC_MAYA_RUNTIME`, Preview only), and all
-seven production deployments are in **Error** — `lib/env.ts` fails closed on the
-missing Supabase variables. P3 and P4 cannot start until the project's
-environment is populated and one deployment is green. That is a deliberate
-hand-off: the values are secrets (service role key, OpenAI key), and uploading
-them is the account owner's call.
+**What Preview needs before P3 can start.** `lib/env.ts` fails closed, and the
+`NEXT_PUBLIC_*` pair is inlined at build time, so all of these must exist in the
+**Preview** environment before the build:
+
+| Variable | Scope | Type |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Preview | Config |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Preview | Config |
+| `SUPABASE_SERVICE_ROLE_KEY` | Preview | Secret |
+| `OPENAI_API_KEY` | Preview | Secret |
+| `APP_URL` | Preview | Config — the preview deployment's own origin |
+| `NEXT_PUBLIC_MAYA_RUNTIME=eve` | Preview | already set |
+
+Uploading the two secrets is the account owner's call. Production stays
+untouched: no eve, no heartbeat, `ai-sdk` as before.
 
 ### What preflight already caught
 
 - **`eve build` reads the agent config at build time.** Pointing
   `agent/agent.ts` at `MAYA_MODEL` broke the build immediately, because
   `.env.local` still held the AI SDK route's bare id (`gpt-5.6-luna`) in that
-  variable. The two routes now have separate variables. The same collision
-  would have failed a Vercel build rather than silently running the wrong
-  model — worth keeping in mind for every agent-config value that reads env.
+  variable. The model has since gone back to being a literal that eve owns, and
+  the AI SDK route's variable is now `MAYA_LEGACY_MODEL` so the two names can
+  never be confused again. The general lesson holds for any agent-config value
+  that reads env: eve resolves it at compile time, so it fails the build rather
+  than falling back at runtime.
 - **Supabase default privileges survive `revoke … from public`.** The claim
   function was callable by any signed-in browser session until it was revoked
   from `anon` and `authenticated` by name (migration
@@ -604,7 +732,7 @@ them is the account owner's call.
 9. Full verification, then P3 — started as early as step 6 allows, since it
    runs for more than a day. **Phase 4 is not declared complete before P3
    passes.**
-10. §5.5 precision trigger, if P1 allows.
+10. Nothing — §5.5 moved into step 4, because the timer is now primary.
 
 ## 14. Explicitly out of scope
 

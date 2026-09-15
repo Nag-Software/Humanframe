@@ -19,9 +19,10 @@ const publicSchema = z.object({
 const serverSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   APP_URL: z.url().default("http://localhost:3000"),
-  // The phase 1 AI SDK route's model. Maya's own model belongs to eve and
-  // lives in agent/agent.ts, not here.
-  MAYA_MODEL: z.string().default("gpt-5.2"),
+  // The phase 1 AI SDK route's model: a bare OpenAI id for the Responses API.
+  // Maya's own model belongs to eve and lives in agent/agent.ts, never here —
+  // the name says "legacy" so the two can never be confused again.
+  MAYA_LEGACY_MODEL: z.string().default("gpt-5.2"),
   // Model access: AI Gateway via Vercel OIDC in preview/production, with an
   // optional local key fallback. OPENAI_API_KEY stays for the OpenAI-specific
   // paths (Responses API today, GPT-Live later).

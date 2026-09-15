@@ -44,9 +44,14 @@ Copy the values into `.env.local` (never committed):
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only; used by background work, never by a request handler that has a user session |
 | `APP_URL` | Origin used for auth callbacks |
 | `OPENAI_API_KEY` | The phase 1 chat route and, later, GPT-Live |
-| `MAYA_MODEL` | OpenAI model id for the phase 1 chat route. Maya's own model is eve's, in `agent/agent.ts` |
+| `MAYA_LEGACY_MODEL` | OpenAI model id for the phase 1 chat route |
 | `AI_GATEWAY_API_KEY` | Optional local fallback when Vercel OIDC is unavailable |
 | `NEXT_PUBLIC_MAYA_RUNTIME` | `ai-sdk` (default) or `eve` |
+
+Maya's own model is not an environment variable. eve owns it as a literal in
+`agent/agent.ts`; change it with `eve set --model <id>` or `/model <id>` in the
+dev TUI. eve resolves the agent config when it compiles the manifest, so the
+change takes effect on the next build.
 
 Model access in preview and production runs on Vercel OIDC. Locally, `eve link`
 populates `VERCEL_OIDC_TOKEN`.
