@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { Thread } from "@/components/assistant-ui/elements/thread.aui";
+import { CallOverlay } from "@/components/maya/call/call-overlay";
 import { EveRuntimeProvider } from "@/components/maya/eve-runtime-provider";
 import { MayaHeader, type MayaCallHandlers } from "@/components/maya/maya-header";
 import { MayaRuntimeProvider } from "@/components/maya/maya-runtime-provider";
@@ -30,11 +31,22 @@ export function MayaChat({
 } & MayaCallHandlers) {
   const components = useMemo(() => ({ Welcome: MayaWelcome }), []);
   const runsOnEve = publicEnv.NEXT_PUBLIC_MAYA_RUNTIME === "eve";
+  const [inCall, setInCall] = useState(false);
+
+  // The call button is an affordance only: the server refuses to start a call
+  // unless CALL_ENABLED is set there too.
+  const callEnabled = publicEnv.NEXT_PUBLIC_CALL_ENABLED === "true";
+  const startCall = callEnabled
+    ? onVoiceCall ?? (() => setInCall(true))
+    : onVoiceCall;
 
   const shell = (body: React.ReactNode) => (
     <div className="flex h-[calc(100svh-4rem)] flex-col">
-      <MayaHeader onVoiceCall={onVoiceCall} onVideoCall={onVideoCall} />
+      <MayaHeader onVoiceCall={startCall} onVideoCall={onVideoCall} />
       <div className="min-h-0 flex-1">{body}</div>
+      {inCall ? (
+        <CallOverlay threadId={threadId} onClose={() => setInCall(false)} />
+      ) : null}
     </div>
   );
 

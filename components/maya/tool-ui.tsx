@@ -15,6 +15,8 @@ import {
   SourceIcon,
   SourceTitle,
 } from "@/components/assistant-ui/elements/sources.aui";
+import { useLocale, useTranslations } from "@/components/i18n-provider";
+import { formatMessage, intlLocales } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
 
 const card =
@@ -30,6 +32,141 @@ const domainOf = (url: string) => {
 
 const faviconOf = (url: string) =>
   `https://www.google.com/s2/favicons?sz=64&domain=${domainOf(url)}`;
+
+function ToolStatus({ children }: { children: string }) {
+  return <p className="text-muted-foreground my-2 text-sm">{children}</p>;
+}
+
+function FetchingLinkStatus() {
+  const t = useTranslations();
+  return <ToolStatus>{t.maya.tools.fetchingLink}</ToolStatus>;
+}
+
+function CreatingFileStatus({ filename }: { filename?: string }) {
+  const t = useTranslations();
+  return (
+    <ToolStatus>
+      {formatMessage(t.maya.tools.creatingFile, {
+        filename: filename || t.maya.tools.fileFallback,
+      })}
+    </ToolStatus>
+  );
+}
+
+function DraftingEmailStatus() {
+  const t = useTranslations();
+  return <ToolStatus>{t.maya.tools.draftingEmail}</ToolStatus>;
+}
+
+function CheckingCalendarStatus() {
+  const t = useTranslations();
+  return <ToolStatus>{t.maya.tools.checkingCalendar}</ToolStatus>;
+}
+
+function FetchUrlRequest({
+  url,
+  reason,
+  onAllowOnce,
+  onDeny,
+}: {
+  url: string;
+  reason?: string;
+  onAllowOnce: () => void;
+  onDeny: () => void;
+}) {
+  const t = useTranslations();
+  return (
+    <ApprovalCard
+      className="my-2"
+      state="request"
+      title={t.maya.tools.openWebsite}
+      subtitle={reason ?? t.maya.tools.openWebsiteReason}
+      command={url}
+      onAllowOnce={onAllowOnce}
+      onDeny={onDeny}
+    />
+  );
+}
+
+function FetchUrlDeclined({ domain }: { domain: string }) {
+  const t = useTranslations();
+  return (
+    <ToolStatus>
+      {formatMessage(t.maya.tools.declinedOpen, { domain })}
+    </ToolStatus>
+  );
+}
+
+function FetchUrlReading({ domain }: { domain: string }) {
+  const t = useTranslations();
+  return (
+    <ToolStatus>{formatMessage(t.maya.tools.reading, { domain })}</ToolStatus>
+  );
+}
+
+function DraftEmailCard({
+  to,
+  subject,
+  body,
+}: {
+  to: string[];
+  subject: string;
+  body: string;
+}) {
+  const t = useTranslations();
+  return (
+    <div className={cn(card, "my-2")}>
+      <div className="text-muted-foreground flex items-center gap-2 text-xs">
+        <MailIcon className="size-3.5" />
+        {t.maya.tools.draft}
+      </div>
+      <p className="text-muted-foreground text-xs">
+        {formatMessage(t.maya.tools.to, { recipients: to.join(", ") })}
+      </p>
+      <p className="text-sm font-medium">{subject}</p>
+      <p className="text-sm whitespace-pre-wrap">{body}</p>
+    </div>
+  );
+}
+
+function CalendarEventCard({
+  title,
+  start,
+  location,
+  attendees,
+}: {
+  title: string;
+  start: string;
+  location?: string;
+  attendees?: string[];
+}) {
+  const t = useTranslations();
+  const locale = useLocale();
+  const date = new Date(start);
+  const formatted = Number.isNaN(date.getTime())
+    ? start
+    : new Intl.DateTimeFormat(intlLocales[locale], {
+        dateStyle: "full",
+        timeStyle: "short",
+      }).format(date);
+
+  return (
+    <div className={cn(card, "my-2")}>
+      <div className="text-muted-foreground flex items-center gap-2 text-xs">
+        <CalendarIcon className="size-3.5" />
+        {t.maya.tools.meetingSuggestion}
+      </div>
+      <p className="text-sm font-medium">{title}</p>
+      <p className="text-muted-foreground text-sm">{formatted}</p>
+      {location ? (
+        <p className="text-muted-foreground text-sm">{location}</p>
+      ) : null}
+      {attendees?.length ? (
+        <p className="text-muted-foreground text-xs">{attendees.join(", ")}</p>
+      ) : null}
+    </div>
+  );
+}
 
 /** Websøk: "Søker på nettet" mens det pågår, kildeliste når det er ferdig. */
 export const WebSearchToolUI = makeAssistantToolUI<
@@ -82,9 +219,7 @@ export const ShowWebsiteToolUI = makeAssistantToolUI<
   toolName: "showWebsite",
   render: ({ args, status }) => {
     if (status.type === "running" || !args?.url) {
-      return (
-        <p className="text-muted-foreground my-2 text-sm">Henter lenke …</p>
-      );
+      return <FetchingLinkStatus />;
     }
 
     return (
@@ -122,11 +257,7 @@ export const CreateFileToolUI = makeAssistantToolUI<
   toolName: "createFile",
   render: ({ args, result, status }) => {
     if (status.type === "running" || !result) {
-      return (
-        <p className="text-muted-foreground my-2 text-sm">
-          Lager {args?.filename ?? "fil"} …
-        </p>
-      );
+      return <CreatingFileStatus filename={args?.filename} />;
     }
 
     return (
@@ -162,24 +293,10 @@ export const DraftEmailToolUI = makeAssistantToolUI<
   toolName: "draftEmail",
   render: ({ args, status }) => {
     if (status.type === "running" || !args?.subject) {
-      return (
-        <p className="text-muted-foreground my-2 text-sm">
-          Skriver e-postutkast …
-        </p>
-      );
+      return <DraftingEmailStatus />;
     }
     return (
-      <div className={cn(card, "my-2")}>
-        <div className="text-muted-foreground flex items-center gap-2 text-xs">
-          <MailIcon className="size-3.5" />
-          Utkast
-        </div>
-        <p className="text-muted-foreground text-xs">
-          Til: {args.to?.join(", ")}
-        </p>
-        <p className="text-sm font-medium">{args.subject}</p>
-        <p className="text-sm whitespace-pre-wrap">{args.body}</p>
-      </div>
+      <DraftEmailCard to={args.to ?? []} subject={args.subject} body={args.body} />
     );
   },
 });
@@ -198,40 +315,16 @@ export const CalendarEventToolUI = makeAssistantToolUI<
   toolName: "previewCalendarEvent",
   render: ({ args, status }) => {
     if (status.type === "running" || !args?.title) {
-      return (
-        <p className="text-muted-foreground my-2 text-sm">
-          Sjekker kalenderen …
-        </p>
-      );
+      return <CheckingCalendarStatus />;
     }
 
-    const format = (value: string) => {
-      const date = new Date(value);
-      return Number.isNaN(date.getTime())
-        ? value
-        : new Intl.DateTimeFormat("nb-NO", {
-            dateStyle: "full",
-            timeStyle: "short",
-          }).format(date);
-    };
-
     return (
-      <div className={cn(card, "my-2")}>
-        <div className="text-muted-foreground flex items-center gap-2 text-xs">
-          <CalendarIcon className="size-3.5" />
-          Forslag til møte
-        </div>
-        <p className="text-sm font-medium">{args.title}</p>
-        <p className="text-muted-foreground text-sm">{format(args.start)}</p>
-        {args.location ? (
-          <p className="text-muted-foreground text-sm">{args.location}</p>
-        ) : null}
-        {args.attendees?.length ? (
-          <p className="text-muted-foreground text-xs">
-            {args.attendees.join(", ")}
-          </p>
-        ) : null}
-      </div>
+      <CalendarEventCard
+        title={args.title}
+        start={args.start}
+        location={args.location}
+        attendees={args.attendees}
+      />
     );
   },
 });
@@ -244,15 +337,13 @@ export const FetchUrlToolUI = makeAssistantToolUI<
   toolName: "fetchUrl",
   render: ({ args, approval, status, respondToApproval }) => {
     const pending = approval && approval.approved === undefined;
+    const domain = domainOf(args?.url ?? "");
 
     if (pending) {
       return (
-        <ApprovalCard
-          className="my-2"
-          state="request"
-          title="Åpne nettside"
-          subtitle={args?.reason ?? "Maya vil lese innholdet på siden"}
-          command={args?.url ?? ""}
+        <FetchUrlRequest
+          url={args?.url ?? ""}
+          reason={args?.reason}
           onAllowOnce={() => void respondToApproval?.({ approved: true })}
           onDeny={() => void respondToApproval?.({ approved: false })}
         />
@@ -260,19 +351,11 @@ export const FetchUrlToolUI = makeAssistantToolUI<
     }
 
     if (approval?.approved === false) {
-      return (
-        <p className="text-muted-foreground my-2 text-sm">
-          Du avslo å åpne {domainOf(args?.url ?? "")}.
-        </p>
-      );
+      return <FetchUrlDeclined domain={domain} />;
     }
 
     if (status.type === "running") {
-      return (
-        <p className="text-muted-foreground my-2 text-sm">
-          Leser {domainOf(args?.url ?? "")} …
-        </p>
-      );
+      return <FetchUrlReading domain={domain} />;
     }
 
     return null;

@@ -3,13 +3,16 @@
 import Image from "next/image";
 import { ThreadPrimitive } from "@assistant-ui/react";
 
-const STARTERS = [
-  "Oppsummer de siste nyhetene om AI i Norge",
-  "Skriv et e-postutkast til en ny kunde",
-  "Lag et møtereferat som jeg kan laste ned",
-];
+import { useTranslations } from "@/components/i18n-provider";
 
 export function MayaWelcome() {
+  const t = useTranslations();
+  const starters = [
+    t.maya.starters.news,
+    t.maya.starters.email,
+    t.maya.starters.agenda,
+  ];
+
   return (
     <div className="mb-8 flex flex-col items-center gap-5 px-4 text-center">
       <Image
@@ -22,14 +25,12 @@ export function MayaWelcome() {
       />
 
       <div className="space-y-1">
-        <h1 className="text-2xl font-medium tracking-tight">Hei, jeg er Maya</h1>
-        <p className="text-muted-foreground text-sm">
-          Spør om hva som helst – jeg kan søke, skrive og lage filer for deg.
-        </p>
+        <h1 className="text-2xl font-medium tracking-tight">{t.maya.greeting}</h1>
+        <p className="text-muted-foreground text-sm">{t.maya.tagline}</p>
       </div>
 
       <div className="flex w-full max-w-md flex-col gap-2">
-        {STARTERS.map((prompt) => (
+        {starters.map((prompt) => (
           <ThreadPrimitive.Suggestion
             key={prompt}
             prompt={prompt}

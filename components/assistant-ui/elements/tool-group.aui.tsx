@@ -17,6 +17,8 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import { useTranslations } from "@/components/i18n-provider";
+import { formatMessage } from "@/lib/i18n/dictionaries";
 
 const ANIMATION_DURATION = 200;
 
@@ -101,7 +103,11 @@ function ToolGroupTrigger({
   count: number;
   active?: boolean;
 }) {
-  const label = `${count} tool ${count === 1 ? "call" : "calls"}`;
+  const t = useTranslations();
+  const label = formatMessage(
+    count === 1 ? t.maya.thread.toolCall : t.maya.thread.toolCalls,
+    { count }
+  );
 
   return (
     <CollapsibleTrigger

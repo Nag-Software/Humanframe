@@ -1,16 +1,19 @@
+import type { Metadata } from "next";
 import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { MayaChat } from "@/components/maya/maya-chat";
 import { publicEnv } from "@/lib/env";
+import { getTranslations } from "@/lib/i18n";
 import { listMessages, toUiMessages } from "@/server/db/repositories/messages";
 import { getThread } from "@/server/db/repositories/threads";
 import { requireRequestScope } from "@/server/db/request-scope";
 
-export const metadata = {
-  title: "Maya · Humanframe",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations();
+  return { title: t.nav.maya };
+}
 
 const threadIdSchema = z.uuid();
 const INITIAL_PAGE_SIZE = 50;

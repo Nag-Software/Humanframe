@@ -18,77 +18,6 @@ import Image from "next/image"
 import { useTranslations } from "@/components/i18n-provider"
 import { DEFAULT_PLAN, type PlanId } from "@/lib/subscription"
 
-// Navigation is static. User comes from the session.
-const data = {
-  navMain: [
-    {
-      title: "Overview",
-      url: "/",
-      icon: (
-        <LayoutDashboardIcon
-        />
-      ),
-    },
-    {
-      title: "Assistants",
-      url: "/assistants",
-      icon: (
-        <TerminalSquareIcon
-        />
-      ),
-      isActive: true,
-      items: [
-        {
-          title: "Maya",
-          url: "/assistants/maya",
-        }
-      ],
-    },
-    {
-      title: "Routine tasks",
-      url: "/routine-tasks",
-      icon: (
-        <ListTodoIcon
-        />
-      ),
-    },
-    {
-      title: "Calendar",
-      url: "/calendar",
-      icon: (
-        <CalendarDaysIcon
-        />
-      )
-    },
-    {
-      title: "Settings",
-      url: "/settings",
-      icon: (
-        <Settings2Icon
-        />
-      ),
-      items: [
-        {
-          title: "General",
-          url: "/settings/general",
-        },
-        {
-          title: "Team",
-          url: "/settings/team",
-        },
-        {
-          title: "Billing",
-          url: "/settings/billing",
-        },
-        {
-          title: "Limits",
-          url: "/settings/limits",
-        },
-      ],
-    },
-  ]
-}
-
 export function AppSidebar({
   user,
   plan = DEFAULT_PLAN,
@@ -98,6 +27,62 @@ export function AppSidebar({
   plan?: PlanId
 }) {
   const t = useTranslations()
+  const navMain = [
+    {
+      title: t.nav.overview,
+      url: "/",
+      icon: <LayoutDashboardIcon />,
+    },
+    {
+      title: t.nav.assistants,
+      url: "/assistants",
+      icon: <TerminalSquareIcon />,
+      isActive: true,
+      items: [
+        {
+          title: t.nav.maya,
+          url: "/assistants/maya",
+        },
+      ],
+    },
+    {
+      title: t.nav.routineTasks,
+      url: "/routine-tasks",
+      icon: <ListTodoIcon />,
+    },
+    {
+      title: t.nav.calendar,
+      url: "/calendar",
+      icon: <CalendarDaysIcon />,
+    },
+    {
+      title: t.nav.settings,
+      url: "/settings",
+      icon: <Settings2Icon />,
+      items: [
+        {
+          title: t.nav.general,
+          url: "/settings/general",
+        },
+        {
+          title: t.nav.notifications,
+          url: "/settings/notifications",
+        },
+        {
+          title: t.nav.team,
+          url: "/settings/team",
+        },
+        {
+          title: t.nav.billing,
+          url: "/settings/billing",
+        },
+        {
+          title: t.nav.limits,
+          url: "/settings/limits",
+        },
+      ],
+    },
+  ]
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -121,7 +106,7 @@ export function AppSidebar({
         />
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
+        <NavMain items={navMain} label={t.nav.platform} />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={user} plan={plan} />

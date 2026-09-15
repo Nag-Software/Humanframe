@@ -15,7 +15,8 @@
     "test:internal-auth": "tsx tests/internal-auth.test.mts",
     "test:notifications": "tsx tests/notifications.test.mts",
     "test:live:memory": "tsx tests/memory-live.test.mts",
-    "test:live:notifications": "tsx tests/notifications-live.test.mts"
+    "test:live:notifications": "tsx tests/notifications-live.test.mts",
+    "test:call": "tsx tests/call.test.mts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.66",

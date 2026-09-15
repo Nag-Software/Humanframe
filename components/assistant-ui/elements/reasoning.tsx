@@ -16,6 +16,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { useTranslations } from "@/components/i18n-provider";
 import { cn } from "@/lib/utils";
 
 export const ANIMATION_DURATION = 200;
@@ -170,6 +171,7 @@ function ReasoningTrigger({
   active?: boolean;
   duration?: number;
 }) {
+  const t = useTranslations();
   const durationText = duration ? ` (${duration}s)` : "";
 
   return (
@@ -192,7 +194,7 @@ function ReasoningTrigger({
           active && "shimmer motion-reduce:animate-none",
         )}
       >
-        Reasoning{durationText}
+        {t.maya.thread.reasoning}{durationText}
       </span>
       <ChevronDownIcon
         data-slot="reasoning-trigger-chevron"

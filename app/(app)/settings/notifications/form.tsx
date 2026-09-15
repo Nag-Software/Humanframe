@@ -2,9 +2,11 @@
 
 import { useActionState, useId, useState } from "react";
 
+import { useTranslations } from "@/components/i18n-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { formatMessage } from "@/lib/i18n/dictionaries";
 
 import { saveNotificationSettings, type NotificationFormState } from "./actions";
 
@@ -27,6 +29,8 @@ export function NotificationSettingsForm({
   settings: NotificationSettingsValues;
   email: string | null;
 }) {
+  const t = useTranslations();
+  const copy = t.settings.notifications.form;
   const [state, action, pending] = useActionState(
     saveNotificationSettings,
     INITIAL
@@ -46,11 +50,11 @@ export function NotificationSettingsForm({
     <form action={action} className="max-w-xl space-y-8">
       <Row
         name="emailEnabled"
-        title="E-postvarsling"
+        title={copy.emailTitle}
         description={
           email
-            ? `Sendes til ${email}. Vi bruker adressen du er logget inn med.`
-            : "Sendes til adressen du er logget inn med."
+            ? formatMessage(copy.emailDescriptionNamed, { email })
+            : copy.emailDescription
         }
         checked={emailEnabled}
         onCheckedChange={setEmailEnabled}
@@ -62,33 +66,33 @@ export function NotificationSettingsForm({
       >
         <Row
           name="reminders"
-          title="Påminnelser"
-          description="Når Maya kommer tilbake til noe hun lovte å følge opp."
+          title={copy.remindersTitle}
+          description={copy.remindersDescription}
           defaultChecked={settings.reminders}
         />
         <Row
           name="backgroundDone"
-          title="Ferdig bakgrunnsarbeid"
-          description="Når noe hun jobbet med i bakgrunnen er ferdig."
+          title={copy.backgroundTitle}
+          description={copy.backgroundDescription}
           defaultChecked={settings.backgroundDone}
         />
         <Row
           name="approvalNeeded"
-          title="Trenger godkjenning"
-          description="Når hun har stoppet og venter på at du godkjenner et steg."
+          title={copy.approvalTitle}
+          description={copy.approvalDescription}
           defaultChecked={settings.approvalNeeded}
         />
 
         <div className="space-y-3">
           <div className="space-y-1">
-            <p className="text-sm font-medium">Stille timer</p>
+            <p className="text-sm font-medium">{copy.quietHoursTitle}</p>
             <p className="text-muted-foreground text-sm">
-              Varsler venter til stille-perioden er over. Ingenting blir borte.
+              {copy.quietHoursDescription}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <label htmlFor={startId} className="text-muted-foreground text-sm">
-              Fra
+              {copy.from}
             </label>
             <Input
               id={startId}
@@ -98,7 +102,7 @@ export function NotificationSettingsForm({
               className="w-32"
             />
             <label htmlFor={endId} className="text-muted-foreground text-sm">
-              til
+              {copy.to}
             </label>
             <Input
               id={endId}
@@ -110,7 +114,7 @@ export function NotificationSettingsForm({
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <label htmlFor={zoneId} className="text-muted-foreground text-sm">
-              Tidssone
+              {copy.timezone}
             </label>
             <Input
               id={zoneId}
@@ -125,7 +129,7 @@ export function NotificationSettingsForm({
 
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={pending}>
-          {pending ? "Lagrer…" : "Lagre"}
+          {pending ? t.common.saving : t.common.save}
         </Button>
         {state.message ? (
           <p

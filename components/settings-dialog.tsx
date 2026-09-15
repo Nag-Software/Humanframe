@@ -10,6 +10,7 @@ import {
 } from "lucide-react"
 
 import { useTranslations } from "@/components/i18n-provider"
+import { LanguageSwitcher } from "@/components/language-switcher"
 import { PageSkeleton } from "@/components/page-skeleton"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -266,6 +267,7 @@ function AccountPanel({
           </div>
         ))}
       </dl>
+      <LanguageSwitcher />
     </section>
   )
 }

@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { PhoneIcon, VideoIcon } from "lucide-react";
 
+import { useTranslations } from "@/components/i18n-provider";
 import { Button } from "@/components/ui/button";
 
 export type MayaCallHandlers = {
@@ -15,6 +16,8 @@ export type MayaCallHandlers = {
  * Anropsknappene er rene integrasjonspunkter; uten handler er de deaktivert.
  */
 export function MayaHeader({ onVoiceCall, onVideoCall }: MayaCallHandlers) {
+  const t = useTranslations();
+
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 px-5">
       <span className="relative">
@@ -32,17 +35,15 @@ export function MayaHeader({ onVoiceCall, onVideoCall }: MayaCallHandlers) {
       </span>
 
       <div className="min-w-0 leading-tight">
-        <p className="truncate text-sm font-medium">Maya</p>
-        <p className="text-muted-foreground truncate text-xs">
-          AI-assistent · tilgjengelig
-        </p>
+        <p className="truncate text-sm font-medium">{t.nav.maya}</p>
+        <p className="text-muted-foreground truncate text-xs">{t.maya.role}</p>
       </div>
 
       <div className="ms-auto flex items-center gap-1">
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Start taleanrop"
+          aria-label={t.maya.voiceCall}
           disabled={!onVoiceCall}
           onClick={onVoiceCall}
         >
@@ -51,7 +52,7 @@ export function MayaHeader({ onVoiceCall, onVideoCall }: MayaCallHandlers) {
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Start videoanrop"
+          aria-label={t.maya.videoCall}
           disabled={!onVideoCall}
           onClick={onVideoCall}
         >

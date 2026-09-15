@@ -1,8 +1,14 @@
+import type { Metadata } from "next";
+
+import { getTranslations } from "@/lib/i18n";
 import { getRequestScope } from "@/server/db/request-scope";
 
 import { NotificationSettingsForm } from "./form";
 
-export const metadata = { title: "Varsler · Innstillinger" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations();
+  return { title: t.settings.pages.notifications.metaTitle };
+}
 
 type Settings = {
   email_enabled: boolean;
@@ -15,7 +21,10 @@ type Settings = {
 };
 
 export default async function NotificationSettingsPage() {
-  const scope = await getRequestScope();
+  const [scope, t] = await Promise.all([
+    getRequestScope(),
+    getTranslations(),
+  ]);
   if (!scope) {
     return null;
   }
@@ -30,13 +39,13 @@ export default async function NotificationSettingsPage() {
     .eq("user_id", scope.userId)
     .maybeSingle<Settings>();
 
+  const copy = t.settings.pages.notifications;
+
   return (
     <section className="space-y-6">
       <div className="space-y-1">
-        <h2 className="text-sm font-medium">Varsler</h2>
-        <p className="text-muted-foreground text-sm">
-          Maya sender e-post bare hvis du slår det på.
-        </p>
+        <h2 className="text-sm font-medium">{copy.title}</h2>
+        <p className="text-muted-foreground text-sm">{copy.description}</p>
       </div>
       <NotificationSettingsForm
         settings={{

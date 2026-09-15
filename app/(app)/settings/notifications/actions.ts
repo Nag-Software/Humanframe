@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { getTranslations } from "@/lib/i18n";
 import { getRequestScope } from "@/server/db/request-scope";
 
 /**
@@ -30,9 +31,11 @@ export async function saveNotificationSettings(
   _previous: NotificationFormState,
   formData: FormData
 ): Promise<NotificationFormState> {
+  const t = await getTranslations();
+  const copy = t.settings.notifications.form;
   const scope = await getRequestScope();
   if (!scope) {
-    return { ok: false, message: "Sign in to change these settings." };
+    return { ok: false, message: copy.signInRequired };
   }
 
   const quietStart = formData.get("quietHoursStart");
@@ -49,7 +52,7 @@ export async function saveNotificationSettings(
   });
 
   if (!parsed.success) {
-    return { ok: false, message: "Those settings were not valid." };
+    return { ok: false, message: copy.invalid };
   }
 
   const { error } = await scope.client.from("notification_settings").upsert(
@@ -68,9 +71,9 @@ export async function saveNotificationSettings(
   );
 
   if (error) {
-    return { ok: false, message: "Could not save. Try again." };
+    return { ok: false, message: copy.saveFailed };
   }
 
   revalidatePath("/settings/notifications");
-  return { ok: true, message: "Saved." };
+  return { ok: true, message: copy.saved };
 }

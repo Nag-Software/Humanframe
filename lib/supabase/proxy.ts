@@ -5,7 +5,10 @@ import { publicEnv } from "@/lib/env";
 
 // `/eve` is the agent runtime's own surface: it runs its own auth walk (see
 // agent/channels/eve.ts) and its health route is deliberately public.
-const PUBLIC_PATHS = ["/login", "/auth", "/eve"];
+// `/internal` is Humanframe calling itself — it authenticates with a Vercel
+// OIDC token, not a browser session, so a redirect to /login would break it
+// while proving nothing. The route runs its own, stricter check.
+const PUBLIC_PATHS = ["/login", "/auth", "/eve", "/internal"];
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some(

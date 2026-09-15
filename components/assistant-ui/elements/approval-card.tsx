@@ -2,6 +2,7 @@
 
 import type { ComponentProps } from "react";
 import { CheckIcon, Loader2Icon, TerminalIcon, XIcon } from "lucide-react";
+import { useTranslations } from "@/components/i18n-provider";
 import { cn } from "@/lib/utils";
 import { field, inkButton, paper } from "./surfaces";
 
@@ -36,6 +37,8 @@ export function ApprovalCard({
   onAlwaysAllow?: () => void;
   onDeny?: () => void;
 }) {
+  const t = useTranslations();
+  const copy = t.maya.approval;
   return (
     <div
       data-slot="approval-card"
@@ -74,14 +77,14 @@ export function ApprovalCard({
               onClick={onDeny}
               className="text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
             >
-              Deny
+              {copy.deny}
             </button>
             <button
               type="button"
               onClick={onAlwaysAllow}
               className="text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
             >
-              Always allow
+              {copy.alwaysAllow}
             </button>
             <button
               type="button"
@@ -91,7 +94,7 @@ export function ApprovalCard({
                 "flex h-8 items-center rounded-full px-3.5 text-xs font-medium",
               )}
             >
-              Allow once
+              {copy.allowOnce}
             </button>
           </>
         ) : (
@@ -102,17 +105,17 @@ export function ApprovalCard({
             {state === "running" ? (
               <>
                 <Loader2Icon className="text-foreground/45 size-3.5 animate-spin" />
-                Approved, running
+                {copy.running}
               </>
             ) : state === "denied" ? (
               <>
                 <XIcon className="text-foreground/45 size-3.5" />
-                Denied
+                {copy.denied}
               </>
             ) : (
               <>
                 <CheckIcon className="size-3.5 text-emerald-500" />
-                Finished with exit 0
+                {copy.finished}
               </>
             )}
           </div>

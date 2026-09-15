@@ -2,7 +2,9 @@
 
 import type { ComponentProps } from "react";
 import { SearchIcon } from "lucide-react";
+import { useTranslations } from "@/components/i18n-provider";
 import { cn } from "@/lib/utils";
+import { formatMessage } from "@/lib/i18n/dictionaries";
 import { field, mono, ShimmerLabel } from "./surfaces";
 import { take } from "../utils/range";
 
@@ -29,6 +31,7 @@ export function WebSearch({
   searching: boolean;
   cycle: number;
 }) {
+  const t = useTranslations();
   return (
     <div
       data-slot="web-search"
@@ -48,11 +51,11 @@ export function WebSearch({
       <div className="text-foreground/45 text-xs">
         {searching ? (
           <ShimmerLabel className="relative inline-block leading-none">
-            Searching
+            {t.maya.thread.searching}
           </ShimmerLabel>
         ) : (
           <span className="fade-in animate-in duration-300">
-            Read 3 sources
+            {formatMessage(t.maya.thread.readSources, { count: 3 })}
           </span>
         )}
       </div>

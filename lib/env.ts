@@ -14,6 +14,12 @@ const publicSchema = z.object({
    * to /api/assistants/maya/chat; `eve` is the durable agent runtime.
    */
   NEXT_PUBLIC_MAYA_RUNTIME: z.enum(["ai-sdk", "eve"]).default("ai-sdk"),
+  /**
+   * Whether the Call button is offered at all. Off by default, and only ever
+   * an affordance: the server checks `CALL_ENABLED` before it will start one,
+   * so turning this on alone cannot place a call.
+   */
+  NEXT_PUBLIC_CALL_ENABLED: z.enum(["true", "false"]).default("false"),
 });
 
 const serverSchema = z.object({
@@ -43,6 +49,19 @@ const serverSchema = z.object({
   NOTIFICATIONS_FROM: z.string().default("Maya <maya@humanframe.app>"),
   // Comma-separated. When set, no other address can be written to.
   NOTIFICATIONS_ALLOWLIST: z.string().optional(),
+  // Call. Off unless an environment turns it on, the same discipline email
+  // notification follows: a deployment must never inherit the ability to spend
+  // on voice minutes just by existing.
+  CALL_ENABLED: z.enum(["true", "false"]).default("false"),
+  // The Realtime model and voice. Verified live before use; see
+  // server/call/openai-realtime.ts.
+  CALL_MODEL: z.string().default("gpt-realtime-2.1"),
+  CALL_VOICE: z.string().default("marin"),
+  // Server-enforced ceilings. See server/call/limits.ts for what each one
+  // actually bounds.
+  CALL_MAX_PER_DAY: z.coerce.number().int().positive().default(20),
+  CALL_MAX_CONCURRENT: z.coerce.number().int().positive().default(1),
+  CALL_MAX_MINUTES: z.coerce.number().int().positive().default(15),
 });
 
 export const publicEnv = publicSchema.parse({
@@ -50,6 +69,7 @@ export const publicEnv = publicSchema.parse({
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   NEXT_PUBLIC_MAYA_RUNTIME: process.env.NEXT_PUBLIC_MAYA_RUNTIME,
+  NEXT_PUBLIC_CALL_ENABLED: process.env.NEXT_PUBLIC_CALL_ENABLED,
 });
 
 type ServerEnv = z.infer<typeof serverSchema> & z.infer<typeof publicSchema>;

@@ -1,16 +1,23 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
 
 import { PageShell } from "@/components/page-shell";
 import { PageSkeleton } from "@/components/page-skeleton";
+import { getTranslations } from "@/lib/i18n";
 
-export const metadata = { title: "Assistenter · Humanframe" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations();
+  return { title: t.pages.assistants.metaTitle };
+}
 
-export default function AssistantsPage() {
+export default async function AssistantsPage() {
+  const t = await getTranslations();
+
   return (
     <PageShell
-      title="Assistenter"
-      description="Assistentene som er satt opp for arbeidsområdet ditt."
+      title={t.pages.assistants.title}
+      description={t.pages.assistants.description}
     >
       <div className="space-y-4">
         <Link
@@ -25,9 +32,9 @@ export default function AssistantsPage() {
             className="size-10 rounded-full object-cover"
           />
           <span className="min-w-0">
-            <span className="block text-sm font-medium">Maya</span>
+            <span className="block text-sm font-medium">{t.nav.maya}</span>
             <span className="text-muted-foreground block text-sm">
-              AI-assistent · tilgjengelig
+              {t.pages.assistants.mayaAvailable}
             </span>
           </span>
         </Link>

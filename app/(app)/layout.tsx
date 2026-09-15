@@ -1,22 +1,19 @@
 import { AppBreadcrumb } from "@/components/app-breadcrumb";
 import { AppSidebar } from "@/components/app-sidebar";
-import { I18nProvider } from "@/components/i18n-provider";
 import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { getDictionary, getLocale } from "@/lib/i18n";
 import { requireRequestScope } from "@/server/db/request-scope";
-import { Analytics } from "@vercel/analytics/next"
+import { Analytics } from "@vercel/analytics/next";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const scope = await requireRequestScope();
-  const dictionary = getDictionary(await getLocale());
 
   return (
-    <I18nProvider dictionary={dictionary}>
+    <>
       <Analytics />
       <SidebarProvider>
         <AppSidebar
@@ -41,6 +38,6 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           {children}
         </SidebarInset>
       </SidebarProvider>
-    </I18nProvider>
+    </>
   );
 }

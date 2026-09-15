@@ -8,12 +8,6 @@ import { SendHorizontalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslations } from "@/components/i18n-provider";
 
-const STARTERS = [
-  "Summarise the latest AI news from Norway",
-  "Draft an email to a new customer",
-  "Prepare an agenda for tomorrow's standup",
-];
-
 /**
  * The empty state of a new conversation.
  *
@@ -25,6 +19,11 @@ const STARTERS = [
 export function NewConversation() {
   const router = useRouter();
   const t = useTranslations();
+  const starters = [
+    t.maya.starters.news,
+    t.maya.starters.email,
+    t.maya.starters.agenda,
+  ];
   const [value, setValue] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,7 +107,7 @@ export function NewConversation() {
       </form>
 
       <div className="flex w-full max-w-xl flex-col gap-2">
-        {STARTERS.map((prompt) => (
+        {starters.map((prompt) => (
           <button
             key={prompt}
             type="button"
