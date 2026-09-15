@@ -283,6 +283,14 @@ times we have tried*, and changing it never changes identity. A recovered
 stranded row keeps its `wake_seq`, so it keeps its `delivery_id`, so a retry is
 recognisably the same reminder rather than a new one.
 
+**Releasing a lease therefore leaves the row in `waking`, not `scheduled`.**
+The first implementation released to `scheduled`, and the next claim then read
+it as a fresh reminder: `wake_seq` advanced, a second `delivery_id` was minted,
+and the reconciliation in step 5 could never fire because the retry no longer
+recognised its own earlier attempt. Tests 5, 7 and 8 caught it. Opening a new
+logical reminder is a separate, explicit operation (`rescheduleCommitment`) for
+a reschedule or a snooze — never a side effect of a retry.
+
 The delivery then runs write-ahead:
 
 1. `attempts := attempts + 1`, `next_attempt_at := now + backoff(attempts)`,
@@ -478,7 +486,7 @@ when the user returns.
 Deterministic, no model calls, mandatory — `pnpm test:commitments`
 (`tests/commitments.test.mts`, built on `tests/memory-support.mts`):
 
-**Recovery and leasing**
+**Recovery and leasing** — implemented, 49/49 green (`pnpm test:commitments`)
 1. Two concurrent claims → each row claimed exactly once.
 2. A live lease is not re-claimable; an expired one is.
 3. A stranded `waking` row with an expired lease is recovered, and keeps its
@@ -524,14 +532,18 @@ Plus the existing gates: `tsc`, `eslint`, `next build`, `pnpm test`,
 
 ## 12. Preflight
 
-**P1 — mechanism (local).** Can a durable workflow be started outside a
-session's task tree? Decides §5.5 only; everything else is unblocked either way.
+**P1 — mechanism (local). Passes at build level.** A `"use workflow"` function
+in `agent/lib/` that is reachable from a tool compiles with no diagnostics and
+registers as its own workflow in the build output
+(`workflow//./agent/lib/probe-timer//probeTimer`), separate from the tool's own
+`…//execute`. So a run can be started detached from the session's task tree.
+Runtime proof needs a live session and is folded into P3; §5.5 stays optional
+until then.
 
-**P2 — types (local).** `import { sleep } from "workflow"` is ambient and needs
-`eve/workflow-modules`. Add `types/workflow.d.ts` containing
-`/// <reference types="eve/workflow-modules" />` rather than setting
-`compilerOptions.types`, which would change which `@types` are included
-globally.
+**P2 — types (local). Passes.** `types/workflow.d.ts` containing
+`/// <reference types="eve/workflow-modules" />` makes `workflow` and
+`workflow/api` resolve, without setting `compilerOptions.types` (which would
+stop every other `@types` package from being included automatically).
 
 **P3 — the long-run test, on a real Vercel environment.** This is the one
 assumption the design rests on, and phase 4 is not finished until it passes:
@@ -555,11 +567,26 @@ assumption the design rests on, and phase 4 is not finished until it passes:
 granularity is not available on Hobby, cadence bounds precision (§5.5), not
 function. Pro becomes a production precondition.
 
-**Blocked right now:** the Vercel project `humanframe` exists but has one
-environment variable (`NEXT_PUBLIC_MAYA_RUNTIME`, Preview) and every production
-deployment is in **Error** — `lib/env.ts` fails closed on the missing Supabase
-variables. P3 and P4 cannot start until the project's environment is populated
-and one deployment is green.
+**Blocked right now:** the Vercel project `humanframe` exists but has exactly
+one environment variable (`NEXT_PUBLIC_MAYA_RUNTIME`, Preview only), and all
+seven production deployments are in **Error** — `lib/env.ts` fails closed on the
+missing Supabase variables. P3 and P4 cannot start until the project's
+environment is populated and one deployment is green. That is a deliberate
+hand-off: the values are secrets (service role key, OpenAI key), and uploading
+them is the account owner's call.
+
+### What preflight already caught
+
+- **`eve build` reads the agent config at build time.** Pointing
+  `agent/agent.ts` at `MAYA_MODEL` broke the build immediately, because
+  `.env.local` still held the AI SDK route's bare id (`gpt-5.6-luna`) in that
+  variable. The two routes now have separate variables. The same collision
+  would have failed a Vercel build rather than silently running the wrong
+  model — worth keeping in mind for every agent-config value that reads env.
+- **Supabase default privileges survive `revoke … from public`.** The claim
+  function was callable by any signed-in browser session until it was revoked
+  from `anon` and `authenticated` by name (migration
+  `20260915084700_claim_function_privileges`). Test 15 is what caught it.
 
 ## 13. Order of work
 

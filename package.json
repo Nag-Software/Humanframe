@@ -11,6 +11,7 @@
     "test": "tsx tests/maya-fixtures.test.mts",
     "test:live": "tsx tests/maya-live.test.mts",
     "test:memory": "tsx tests/memory.test.mts",
+    "test:commitments": "tsx tests/commitments.test.mts",
     "test:live:memory": "tsx tests/memory-live.test.mts"
   },
   "dependencies": {
