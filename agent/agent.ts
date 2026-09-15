@@ -9,5 +9,5 @@ export default defineAgent({
   // `eve set --model <id>` or `/model <id>` in the dev TUI, both of which
   // rewrite the literal below. It is read when the manifest is compiled, so a
   // change needs a rebuild either way.
-  model: "openai/gpt-5.6-luna",
+  model: "minimax/minimax-m2.7",
 });

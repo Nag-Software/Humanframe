@@ -16,6 +16,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  */
 
 export const DEFAULT_LEASE_MS = 5 * 60_000;
+/**
+ * A send must finish, or be abandoned, well inside the lease. If it could
+ * outlive the lease, a second worker could claim the row and deliver while the
+ * first send was still in flight — and the lease is the only duplicate defence
+ * that does not depend on a projection.
+ */
+export const SEND_TIMEOUT_MS = 30_000;
 export const WAKE_MAX_ATTEMPTS = 5;
 /** Exponential-ish backoff between delivery attempts, in seconds. */
 export const WAKE_BACKOFF_SECONDS = [60, 120, 300, 900, 3600];

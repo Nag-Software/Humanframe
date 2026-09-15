@@ -23,6 +23,7 @@ import {
   type SendOutcome,
   type Sender,
 } from "../agent/lib/delivery.ts";
+import { effectKey, performOnce, readEffect } from "../agent/lib/effects.ts";
 import { admin, createTestWorkspace, type TestWorkspace } from "./memory-support.mts";
 
 /**
@@ -108,6 +109,14 @@ const resolveTo = (sessionId: string) => async () =>
 
 const wakePrompt = (commitment: Commitment, marker: string) =>
   `${marker} ${commitment.title}`;
+
+/** What the passage of time does: the backoff window has elapsed. */
+async function backoffElapsed(commitmentId: string): Promise<void> {
+  await admin
+    .from("commitment_deliveries")
+    .update({ next_attempt_at: new Date(Date.now() - 1000).toISOString() })
+    .eq("commitment_id", commitmentId);
+}
 
 async function main(): Promise<void> {
   const alpha = await createTestWorkspace("commit-a");
@@ -196,6 +205,7 @@ async function main(): Promise<void> {
       });
       check("an ambiguous send defers", first.status === "deferred", first);
 
+      await backoffElapsed(commitment.id);
       const [reclaimed] = await claimDueCommitments(admin, { id: commitment.id });
       const delivery = await openDelivery(admin, reclaimed);
       check("the retry is the same delivery id",
@@ -248,6 +258,7 @@ async function main(): Promise<void> {
       });
 
       // The receiver had accepted it after all: the marker is in the thread.
+      await backoffElapsed(commitment.id);
       const [reclaimed] = await claimDueCommitments(admin, { id: commitment.id });
       const resender = scriptedSender([{ kind: "accepted" }]);
       const result = await deliverCommitment({
@@ -357,6 +368,193 @@ async function main(): Promise<void> {
       check("a commitment completed before its wake delivers nothing",
         result.status === "skipped" && result.reason === "already_handled", result);
       check("no wake message is sent", sender.calls.length === 0);
+    }
+
+    // --- 12a. Two workers racing one commitment produce one wake -----------
+    {
+      const commitment = await due(alpha, thread, "race");
+      const claims = await Promise.all([
+        claimDueCommitments(admin, { id: commitment.id }),
+        claimDueCommitments(admin, { id: commitment.id }),
+      ]);
+      const winners = claims.flat();
+      check("only one worker may deliver a commitment", winners.length === 1,
+        { winners: winners.length });
+
+      // The loser tries anyway, with a lease it does not hold.
+      const loserSender = scriptedSender([{ kind: "accepted" }]);
+      const loser = await deliverCommitment({
+        client: admin, commitment: winners[0], leaseToken: randomUUID(),
+        resolveTarget: resolveTo("ses_race2"), send: loserSender,
+        reconcile: neverLanded, buildMessage: wakePrompt,
+      });
+      const winnerSender = scriptedSender([{ kind: "accepted" }]);
+      const winner = await deliverCommitment({
+        client: admin, commitment: winners[0], leaseToken: winners[0].lease_token!,
+        resolveTarget: resolveTo("ses_race2"), send: winnerSender,
+        reconcile: neverLanded, buildMessage: wakePrompt,
+      });
+      const sends = loserSender.calls.length + winnerSender.calls.length;
+      check("exactly one visible wake is sent when two workers race", sends === 1,
+        { loser: loserSender.calls.length, winner: winnerSender.calls.length, loser_result: loser.status, winner_result: winner.status });
+    }
+
+    // --- 12b. A sent delivery is never resent ------------------------------
+    {
+      const commitment = await due(alpha, thread, "sent-wins");
+      const [claimed] = await claimDueCommitments(admin, { id: commitment.id });
+      const first = scriptedSender([{ kind: "accepted" }]);
+      await deliverCommitment({
+        client: admin, commitment: claimed, leaseToken: claimed.lease_token!,
+        resolveTarget: resolveTo("ses_sent"), send: first,
+        reconcile: neverLanded, buildMessage: wakePrompt,
+      });
+
+      // Force it back into the claim, with a reconciler that lies: the message
+      // projection has not caught up. The row's own state has to win.
+      await admin
+        .from("commitments")
+        .update({ status: "waking", lease_until: new Date(Date.now() - 1000).toISOString() })
+        .eq("id", commitment.id);
+      const [again] = await claimDueCommitments(admin, { id: commitment.id });
+      const second = scriptedSender([{ kind: "accepted" }]);
+      const result = await deliverCommitment({
+        client: admin, commitment: again, leaseToken: again.lease_token!,
+        resolveTarget: resolveTo("ses_sent"), send: second,
+        reconcile: neverLanded, buildMessage: wakePrompt,
+      });
+      check("a sent delivery is not resent even when the marker lookup fails",
+        second.calls.length === 0, { sends: second.calls.length, result });
+      check("it reports as delivered and deduplicated",
+        result.status === "delivered" && result.deduplicated, result);
+    }
+
+    // --- 12c. Backoff is a hard gate ---------------------------------------
+    {
+      const commitment = await due(alpha, thread, "backoff");
+      const [claimed] = await claimDueCommitments(admin, { id: commitment.id });
+      const failing = scriptedSender([{ kind: "ambiguous", error: new Error("reset") }]);
+      await deliverCommitment({
+        client: admin, commitment: claimed, leaseToken: claimed.lease_token!,
+        resolveTarget: resolveTo("ses_backoff"), send: failing,
+        reconcile: neverLanded, buildMessage: wakePrompt,
+      });
+
+      const [again] = await claimDueCommitments(admin, { id: commitment.id });
+      const tooSoon = scriptedSender([{ kind: "accepted" }]);
+      const result = await deliverCommitment({
+        client: admin, commitment: again, leaseToken: again.lease_token!,
+        resolveTarget: resolveTo("ses_backoff"), send: tooSoon,
+        reconcile: neverLanded, buildMessage: wakePrompt,
+      });
+      check("a retry before next_attempt_at is refused",
+        result.status === "deferred" && result.reason === "backoff", result);
+      check("nothing is sent during the backoff window", tooSoon.calls.length === 0);
+    }
+
+    // --- 12d. An action runs at most once, however many wakes arrive -------
+    {
+      const commitment = await due(alpha, thread, "effect-once");
+      const [claimed] = await claimDueCommitments(admin, { id: commitment.id });
+      let performed = 0;
+      const subject = {
+        type: "commitment" as const,
+        id: commitment.id,
+        wakeSeq: claimed.wake_seq,
+      };
+      const run = () =>
+        performOnce(
+          admin,
+          {
+            workspaceId: alpha.workspaceId,
+            assistantId: alpha.assistantId,
+            subject,
+            name: "send_followup_email",
+          },
+          async () => {
+            performed += 1;
+            return { messageId: "msg-1" };
+          }
+        );
+
+      const first = await run();
+      const second = await run();
+      check("the first wake performs the action", first.status === "performed");
+      check("a second wake does not perform it again",
+        second.status === "already_performed", second);
+      check("the effect ran exactly once", performed === 1, { performed });
+
+      const ledger = await readEffect(
+        admin, alpha.workspaceId, effectKey(subject, "send_followup_email"));
+      check("the ledger records the result", ledger?.state === "succeeded");
+      check("the key is derived from the business subject, not the attempt",
+        ledger?.idempotency_key ===
+          `commitment:${commitment.id}:wake:${claimed.wake_seq}:action:send_followup_email`,
+        ledger?.idempotency_key);
+    }
+
+    // --- 12e. A crashed effect is retried, not abandoned --------------------
+    {
+      const commitment = await due(alpha, thread, "effect-crash");
+      const [claimed] = await claimDueCommitments(admin, { id: commitment.id });
+      const subject = {
+        type: "commitment" as const,
+        id: commitment.id,
+        wakeSeq: claimed.wake_seq,
+      };
+      let attempts = 0;
+
+      try {
+        await performOnce(
+          admin,
+          { workspaceId: alpha.workspaceId, subject, name: "flaky" },
+          async () => {
+            attempts += 1;
+            throw new Error("provider exploded");
+          }
+        );
+      } catch {
+        // expected
+      }
+
+      const retried = await performOnce(
+        admin,
+        { workspaceId: alpha.workspaceId, subject, name: "flaky" },
+        async () => {
+          attempts += 1;
+          return { ok: true };
+        }
+      );
+      check("a failed effect is retried", retried.status === "performed", retried);
+      check("it ran twice in total, not more", attempts === 2, { attempts });
+    }
+
+    // --- 12f. A live lease blocks a concurrent effect -----------------------
+    {
+      const commitment = await due(alpha, thread, "effect-inflight");
+      const [claimed] = await claimDueCommitments(admin, { id: commitment.id });
+      const subject = {
+        type: "commitment" as const,
+        id: commitment.id,
+        wakeSeq: claimed.wake_seq,
+      };
+      let concurrent: Awaited<ReturnType<typeof performOnce>> | null = null;
+
+      await performOnce(
+        admin,
+        { workspaceId: alpha.workspaceId, subject, name: "slow" },
+        async () => {
+          concurrent = await performOnce(
+            admin,
+            { workspaceId: alpha.workspaceId, subject, name: "slow" },
+            async () => ({ shouldNotRun: true })
+          );
+          return { ok: true };
+        }
+      );
+      check("an effect already in flight is not started a second time",
+        concurrent !== null && (concurrent as { status: string }).status === "in_flight",
+        concurrent);
     }
 
     // --- 13. Events are idempotent ----------------------------------------

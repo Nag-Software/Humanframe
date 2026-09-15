@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   WAKE_MAX_ATTEMPTS,
+  SEND_TIMEOUT_MS,
   beginAttempt,
   isTerminal,
   markDelivered,
@@ -51,6 +52,12 @@ export type Sender = (input: {
   message: string;
   commitment: Commitment;
   delivery: Delivery;
+  /**
+   * Aborts at SEND_TIMEOUT_MS, which is far below the lease. A send that
+   * outlives its lease would let a second worker start while the first is
+   * still in flight, and the lease is the only synchronous defence there is.
+   */
+  signal: AbortSignal;
 }) => Promise<SendOutcome>;
 
 /** Did a wake carrying this marker already land in the session? */
@@ -69,7 +76,7 @@ export type TargetResolver = (commitment: Commitment) => Promise<{
 export type DeliveryResult =
   | { status: "delivered"; deliveryId: string; deduplicated: boolean }
   | { status: "skipped"; reason: "cancelled" | "already_handled" | "lease_lost" }
-  | { status: "deferred"; reason: "refused" | "ambiguous" | "no_target" }
+  | { status: "deferred"; reason: "refused" | "ambiguous" | "no_target" | "backoff" }
   | { status: "abandoned"; reason: string };
 
 export async function deliverCommitment(input: {
@@ -103,15 +110,34 @@ export async function deliverCommitment(input: {
   const commitment = current;
   const delivery = await openDelivery(client, commitment);
 
-  // 2. Already confirmed: another worker finished this reminder.
-  if (delivery.state === "confirmed") {
+  // 2. The delivery row's own state outranks every later check. `sent` means
+  //    a process observed the receiver accept it; `confirmed` means we saw the
+  //    message land. Neither is ever resent — this is the defence that does not
+  //    depend on a projection catching up.
+  if (delivery.state === "confirmed" || delivery.state === "sent") {
+    if (delivery.state === "sent") {
+      await markDelivery(client, delivery, { state: "confirmed" });
+    }
     await markDelivered(client, commitment, leaseToken);
     return { status: "delivered", deliveryId: delivery.id, deduplicated: true };
   }
 
-  // 3. Anything that has been tried before is reconciled before it is retried.
-  //    This is the ambiguous window: a send that timed out may still have been
-  //    accepted, and the marker is how we find out.
+  if (delivery.state === "abandoned") {
+    await releaseLease(client, commitment, leaseToken);
+    return { status: "abandoned", reason: delivery.abandoned_reason ?? "abandoned" };
+  }
+
+  // 3. Backoff is a hard gate, not a hint: a retry before the previous attempt
+  //    is definitively over is how an ambiguous send becomes a duplicate.
+  if (delivery.next_attempt_at && new Date(delivery.next_attempt_at) > now) {
+    await releaseLease(client, commitment, leaseToken);
+    return { status: "deferred", reason: "backoff" };
+  }
+
+  // 4. What is left is the genuinely ambiguous case: attempts were spent but
+  //    this process never learned the outcome. The marker is advisory — it
+  //    reads a projection a hook writes — so it can only ever *prevent* a
+  //    resend, never authorise one.
   if (delivery.attempts > 0 && delivery.target_session_id) {
     const landed = await input.reconcile({
       sessionId: delivery.target_session_id,
@@ -136,7 +162,7 @@ export async function deliverCommitment(input: {
     }
   }
 
-  // 4. Out of attempts: record the miss rather than losing it.
+  // 5. Out of attempts: record the miss rather than losing it.
   if (delivery.attempts >= WAKE_MAX_ATTEMPTS) {
     await markDelivery(client, delivery, {
       state: "abandoned",
@@ -165,14 +191,16 @@ export async function deliverCommitment(input: {
     return { status: "deferred", reason: "no_target" };
   }
 
-  // 5. Write-ahead: the attempt is durable before the send leaves the process.
+  // 6. Write-ahead: the attempt is durable before the send leaves the process.
   const attempt = await beginAttempt(client, delivery, target, now);
 
+  const abort = AbortSignal.timeout(SEND_TIMEOUT_MS);
   const outcome = await input.send({
     sessionId: target.sessionId,
     message: input.buildMessage(commitment, attempt.marker),
     commitment,
     delivery: attempt,
+    signal: abort,
   });
 
   if (outcome.kind === "accepted") {
