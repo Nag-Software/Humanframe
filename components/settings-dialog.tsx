@@ -212,7 +212,7 @@ function SettingsTabContent({
     return <BillingPanel plan={plan} t={t} />
   }
   if (tab === "connections") {
-    return <ConnectionsPanel t={t} />
+    return <ConnectionsPanel />
   }
   return (
     <NotificationsPanel
@@ -346,12 +346,9 @@ function TabIntro({
   )
 }
 
-function ConnectionsPanel({ t }: { t: Dictionary }) {
-  const copy = t.settings.connections
-
+function ConnectionsPanel() {
   return (
     <section className="flex flex-col gap-4">
-      <TabIntro title={copy.title} description={copy.description} />
       <ConnectorStatus />
     </section>
   )

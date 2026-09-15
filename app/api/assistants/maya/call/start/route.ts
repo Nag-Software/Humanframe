@@ -3,29 +3,13 @@ import { z } from "zod";
 import { errorFields, logger } from "@/lib/logger";
 import { serverEnv } from "@/lib/env";
 import { getTranslations } from "@/lib/i18n";
-import {
-  attachProviderCall,
-  createCallSession,
-  endCallSession,
-} from "@/server/call/binding";
-import { buildCallInstructions } from "@/server/call/context";
-import {
-  checkCallLimits,
-  endAbandonedCalls,
-  reapStaleCalls,
-} from "@/server/call/limits";
+import { attachProviderCall, endCallSession } from "@/server/call/binding";
+import { prepareCall } from "@/server/call/prepare";
 import {
   createLiveSession,
   liveModel,
   liveSessionConfig,
 } from "@/server/call/openai-live";
-import { getAssistantBySlug } from "@/server/db/repositories/assistants";
-import {
-  ensureThread,
-  getThread,
-  touchThread,
-} from "@/server/db/repositories/threads";
-import { getRequestScope } from "@/server/db/request-scope";
 
 /**
  * Starts a call.
@@ -51,82 +35,24 @@ export async function POST(req: Request) {
     return Response.json({ error: "Call is not enabled" }, { status: 404 });
   }
 
-  const scope = await getRequestScope();
-  if (!scope) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return Response.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const assistant = await getAssistantBySlug(
-    scope.client,
-    scope.workspaceId,
-    "maya"
-  );
-  if (!assistant) {
-    return Response.json({ error: "Assistant not found" }, { status: 404 });
-  }
-
-  // A call that was never hung up must not hold the concurrency slot forever.
-  await reapStaleCalls(scope.workspaceId);
-
-  // This user is starting a call, so any call of theirs still marked open
-  // belongs to a page that is gone — a reload, a crash, a closed tab. Ending
-  // it here is what stops the concurrency cap from locking them out of their
-  // own abandoned session until the stale sweep catches up.
-  const superseded = await endAbandonedCalls({
-    workspaceId: scope.workspaceId,
-    userId: scope.userId,
-  });
-  if (superseded > 0) {
-    logger.info("call.superseded", {
-      workspaceId: scope.workspaceId,
-      count: superseded,
-    });
-  }
-
-  const verdict = await checkCallLimits({
-    workspaceId: scope.workspaceId,
-    userId: scope.userId,
-  });
-  if (!verdict.allowed) {
-    return Response.json(
-      { error: verdict.reason, message: verdict.message },
-      { status: 429 }
-    );
-  }
-
-  // The thread is resolved through row level security, so a thread id that
-  // belongs to someone else reads as absent and a fresh one is created instead
-  // of being joined.
   const t = await getTranslations();
-  const threadId = await resolveThread(
-    scope,
-    assistant.id,
-    parsed.data.threadId,
-    t.maya.call.threadTitle
-  );
-
-  const { instructions } = await buildCallInstructions({
-    client: scope.client,
-    workspaceId: scope.workspaceId,
-    assistantId: assistant.id,
-    userId: scope.userId,
-    userName: scope.userName,
+  const prepared = await prepareCall({
     timezone: parsed.data.timezone,
-  });
-
-  const binding = await createCallSession({
-    workspaceId: scope.workspaceId,
-    assistantId: assistant.id,
-    threadId,
-    userId: scope.userId,
+    threadId: parsed.data.threadId,
+    threadTitle: t.maya.call.threadTitle,
+    channel: "live",
     provider: "openai_realtime",
-    model: liveModel(),
   });
+  if (!prepared.ok) {
+    return prepared.response;
+  }
+
+  const { scope, threadId, instructions, binding } = prepared.call;
 
   try {
     const { answerSdp, providerCallId } = await createLiveSession({
@@ -158,32 +84,4 @@ export async function POST(req: Request) {
     });
     return Response.json({ error: "Could not start the call" }, { status: 502 });
   }
-}
-
-/**
- * The thread this call belongs to: the one the user was already in, or a new
- * canonical one created through the app's own pattern.
- */
-async function resolveThread(
-  scope: Awaited<ReturnType<typeof getRequestScope>> & object,
-  assistantId: string,
-  requested: string | null | undefined,
-  title: string
-): Promise<string> {
-  if (requested) {
-    const thread = await getThread(scope, requested);
-    if (thread) {
-      await touchThread(scope, thread.id, new Date().toISOString());
-      return thread.id;
-    }
-  }
-
-  const threadId = crypto.randomUUID();
-  await ensureThread(scope, {
-    threadId,
-    assistantId,
-    channel: "live",
-    title,
-  });
-  return threadId;
 }

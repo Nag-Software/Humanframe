@@ -29,6 +29,12 @@ import type { TranscriptDelta } from "@/lib/call/turn-assembler";
  *    no task text, and we decide what that work is from the transcript.
  *  - There is no transcript `completed` event and no `response.done`. Turns
  *    are assembled from deltas; see `lib/call/turn-assembler.ts`.
+ *  - Interruption on WebRTC is the model's own VAD cancelling output. The
+ *    Realtime WebSocket `conversation.item.truncate` / `audio_end_ms` flow
+ *    is a different API. Live does not expose a sample-accurate cursor of
+ *    what the user heard, and a transcript delta is not that cursor. The
+ *    FaceTime prototype therefore never sends a guessed truncate; it stores
+ *    barge-in and unobserved playback as interrupted.
  *
  * One trap worth naming: `/v1/realtime/calls` parses the SDP before it
  * validates the model, so probing it with a throwaway offer reports a bad

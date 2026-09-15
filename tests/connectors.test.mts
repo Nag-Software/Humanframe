@@ -629,6 +629,40 @@ async function main(): Promise<void> {
   });
   check("52 re-binding the same account is idempotent", rebound.id === bound.id);
 
+  const afterBind = await discoverActions({
+    workspaceId: alice.workspaceId,
+    userId: alice.userId,
+    assistantId: alice.assistantId,
+  });
+  check(
+    "52b binding grants Maya read and send on that mailbox",
+    afterBind.some(
+      (action) =>
+        action.accountId === bound.id && action.actionKey === "email.send"
+    ),
+    afterBind.map((action) => `${action.accountId}:${action.actionKey}`)
+  );
+
+  const reboundAgain = await bindAccount({
+    workspaceId: alice.workspaceId,
+    userId: alice.userId,
+    provider: "gmail",
+    composioUserId: alice.userId,
+    connectedAccountId: "ca_bind_test",
+    accountEmail: "bind@example.test",
+  });
+  const { data: liveGrants } = await admin
+    .from("connector_grants")
+    .select("id")
+    .eq("account_id", reboundAgain.id)
+    .eq("assistant_id", alice.assistantId)
+    .is("revoked_at", null);
+  check(
+    "52c re-binding does not stack a second live grant",
+    (liveGrants ?? []).length === 1,
+    liveGrants?.length
+  );
+
   const mine = await listAccounts({
     workspaceId: alice.workspaceId,
     userId: alice.userId,
@@ -687,10 +721,8 @@ async function main(): Promise<void> {
   // -----------------------------------------------------------------------
   // A connected account with no grant is inert
   //
-  // This is the design, and it is also how a working mailbox can look broken:
-  // the account binds, the model gets no tools, and nothing says why. The
-  // guarantee worth pinning is that granting is the only thing that changes
-  // it — not connecting, and not workspace membership.
+  // bindAccount grants Maya automatically. A raw insert — the way a row can
+  // exist without that path — must still discover nothing until granted.
   // -----------------------------------------------------------------------
 
   // A clean tenant, so the one-live-mailbox rule does not interfere.

@@ -49,17 +49,50 @@ export type UseCall = {
   hangUp: () => void;
 };
 
-type StartResponse = {
+export type CallStartResponse = {
   callSessionId: string;
   threadId: string;
   answerSdp: string;
   maxMinutes: number;
+  render?: {
+    conversationId: string;
+    conversationUrl: string;
+  };
+};
+
+type UseCallOptions = {
+  threadId: string | null;
+  /** Voice Call posts here. The FaceTime prototype posts to its own start. */
+  startUrl?: string;
+  /**
+   * When true the OpenAI media track is not attached to an audio element.
+   * FaceTime taps the track and plays Tavus instead. A muted element would
+   * not have been a proof of a single audible path.
+   */
+  muteProviderAudio?: boolean;
+  onRemoteAudioTrack?: (track: MediaStreamTrack) => void;
+  onStart?: (body: CallStartResponse) => void;
+  onProviderEvent?: (event: LiveEvent) => void;
+  onTeardown?: () => void;
+  /**
+   * FaceTime has no sample-accurate playback cursor. When this returns true
+   * an assistant turn is stored as interrupted and skipped for memory.
+   */
+  shouldMarkTurnInterrupted?: () => boolean;
+};
+
+type LiveEvent = {
+  type?: string;
+  delta?: string;
+  start_ms?: number;
+  end_ms?: number;
+  delegation?: { id?: string; target?: string };
 };
 
 /** How long after the last audio fragment Maya counts as still speaking. */
 const SPEAKING_IDLE_MS = 800;
 
-export function useCall(options: { threadId: string | null }): UseCall {
+export function useCall(options: UseCallOptions): UseCall {
   const [status, setStatus] = useState<CallStatus>("idle");
   const [error, setError] = useState<CallError | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -97,6 +130,10 @@ export function useCall(options: { threadId: string | null }): UseCall {
    * which is a call that keeps talking and can never be hung up.
    */
   const generation = useRef(0);
+  const callbacks = useRef(options);
+  useEffect(() => {
+    callbacks.current = options;
+  });
 
   /**
    * Sends one finished turn to be persisted.
@@ -106,7 +143,12 @@ export function useCall(options: { threadId: string | null }): UseCall {
    * fragment cannot produce two messages.
    */
   const relayTurn = useCallback(
-    async (turn: { sourceId: string; role: "user" | "assistant"; text: string }) => {
+    async (turn: {
+      sourceId: string;
+      role: "user" | "assistant";
+      text: string;
+      interrupted?: boolean;
+    }) => {
       const id = callId.current;
       if (!id || relayed.current.has(turn.sourceId)) {
         return;
@@ -125,11 +167,15 @@ export function useCall(options: { threadId: string | null }): UseCall {
 
   /** Releases every resource. Safe to call repeatedly. */
   const teardown = useCallback(() => {
-    // Whatever was still being said is a real turn: close it and send it
-    // before the transport goes away, or the last thing said is lost.
+    // Persistence has to read the FaceTime ledger *before* render teardown
+    // resets it. Otherwise a heard last turn is stored as uncertain.
     const pending = assembler.current.flush();
+    const interrupted =
+      pending?.role === "assistant" &&
+      callbacks.current.shouldMarkTurnInterrupted?.() === true;
+    callbacks.current.onTeardown?.();
     if (pending) {
-      void relayTurn(pending);
+      void relayTurn({ ...pending, interrupted });
     }
     assembler.current = new TurnAssembler();
 
@@ -208,6 +254,8 @@ export function useCall(options: { threadId: string | null }): UseCall {
         return;
       }
 
+      callbacks.current.onProviderEvent?.(event);
+
       if (event.type === "session.output_audio.delta") {
         setSpeaking(true);
         if (speakingTimer.current) {
@@ -227,7 +275,10 @@ export function useCall(options: { threadId: string | null }): UseCall {
       if (delta) {
         const finished = assembler.current.push(delta);
         if (finished) {
-          await relayTurn(finished);
+          const interrupted =
+            finished.role === "assistant" &&
+            callbacks.current.shouldMarkTurnInterrupted?.() === true;
+          await relayTurn({ ...finished, interrupted });
         }
         return;
       }
@@ -322,17 +373,27 @@ export function useCall(options: { threadId: string | null }): UseCall {
         connection.addTrack(track, stream);
       }
 
-      // Maya's voice. Created here rather than in the tree so teardown owns
-      // it, but attached to the document: a detached element is not reliably
-      // tracked by the browser's echo canceller, and an element the canceller
-      // cannot see is an element she hears herself through.
-      const element = document.createElement("audio");
-      element.autoplay = true;
-      element.hidden = true;
-      document.body.append(element);
-      audio.current = element;
+      // Maya's voice on a regular call. Attached to the document so echo
+      // cancellation can see it. The FaceTime prototype must not play this
+      // element: Tavus video is the one audible path, and a muted element is
+      // not a proof the browser will keep it silent on every engine.
+      const muteProvider = callbacks.current.muteProviderAudio === true;
+      let element: HTMLAudioElement | null = null;
+      if (!muteProvider) {
+        element = document.createElement("audio");
+        element.autoplay = true;
+        element.hidden = true;
+        document.body.append(element);
+        audio.current = element;
+      }
       connection.ontrack = (event) => {
-        element.srcObject = event.streams[0];
+        if (element) {
+          element.srcObject = event.streams[0];
+        }
+        const track = event.track;
+        if (track.kind === "audio") {
+          callbacks.current.onRemoteAudioTrack?.(track);
+        }
       };
 
       const data = connection.createDataChannel("oai-events");
@@ -364,16 +425,19 @@ export function useCall(options: { threadId: string | null }): UseCall {
         return;
       }
 
-      const response = await fetch("/api/assistants/maya/call/start", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          sdp: offer.sdp,
-          threadId: options.threadId,
-          timezone:
-            Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-        }),
-      });
+      const response = await fetch(
+        callbacks.current.startUrl ?? "/api/assistants/maya/call/start",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            sdp: offer.sdp,
+            threadId: options.threadId,
+            timezone:
+              Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+          }),
+        }
+      );
 
       if (!response.ok) {
         const detail = (await response.json().catch(() => null)) as {
@@ -388,7 +452,7 @@ export function useCall(options: { threadId: string | null }): UseCall {
         return;
       }
 
-      const body = (await response.json()) as StartResponse;
+      const body = (await response.json()) as CallStartResponse;
 
       if (!owns()) {
         // The call exists on the server now, so it has to be ended there as
@@ -402,6 +466,7 @@ export function useCall(options: { threadId: string | null }): UseCall {
 
       callId.current = body.callSessionId;
       setThreadId(body.threadId);
+      callbacks.current.onStart?.(body);
 
       await connection.setRemoteDescription({
         type: "answer",
@@ -459,14 +524,6 @@ export function useCall(options: { threadId: string | null }): UseCall {
     hangUp,
   };
 }
-
-type LiveEvent = {
-  type?: string;
-  delta?: string;
-  start_ms?: number;
-  end_ms?: number;
-  delegation?: { id?: string; target?: string };
-};
 
 /**
  * The browser's half of the OpenAI adapter, kept deliberately thin and kept

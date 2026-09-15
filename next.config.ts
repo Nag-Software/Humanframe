@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
   // named explicitly here instead of being duplicated into the bundle.
   outputFileTracingIncludes: {
     "/api/assistants/maya/call/start": ["./agent/instructions.md"],
+    "/api/assistants/maya/facetime/start": ["./agent/instructions.md"],
   },
   async redirects() {
     return [

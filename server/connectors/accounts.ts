@@ -5,14 +5,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getRuntimeSupabase } from "@/agent/lib/supabase";
 import { errorFields, logger } from "@/lib/logger";
 import type { EmailProvider } from "@/server/connectors/composio";
+import { getAssistantBySlug } from "@/server/db/repositories/assistants";
 
 /**
  * Connected accounts, grants, and the OAuth state that binds a callback to the
  * person who started it.
  *
- * The rule the whole module exists to enforce: an inbox is personal. Being in
- * the same workspace grants nothing, and neither does being an assistant in it.
- * Access is a row — `connector_grants` — written by the account's owner.
+ * The inbox is still personal: workspace membership grants nothing. Connecting
+ * *is* the owner's grant to Maya — read and send. Send still stops for
+ * in-thread approval; this only makes the tools visible.
  */
 
 export type ConnectorAccount = {
@@ -196,7 +197,14 @@ export async function bindAccount(input: {
     });
     throw new Error("Could not save the connection");
   }
-  return toAccount(data);
+
+  const account = toAccount(data);
+  await grantMayaMailbox({
+    workspaceId: input.workspaceId,
+    userId: input.userId,
+    accountId: account.id,
+  });
+  return account;
 }
 
 export async function listAccounts(input: {
@@ -212,6 +220,68 @@ export async function listAccounts(input: {
     .returns<AccountRow[]>();
 
   return (data ?? []).map(toAccount);
+}
+
+const MAYA_MAILBOX_CAPABILITIES = ["read", "send"] as const;
+
+/**
+ * Connecting a mailbox is the owner's yes to Maya using it.
+ *
+ * Send still requires in-thread approval. This only writes the grant the
+ * discovery layer intersects with the register — without it a connected
+ * inbox is invisible to the model.
+ */
+async function grantMayaMailbox(input: {
+  workspaceId: string;
+  userId: string;
+  accountId: string;
+}): Promise<void> {
+  const client = connectorClient();
+  const maya = await getAssistantBySlug(client, input.workspaceId, "maya");
+  if (!maya) {
+    logger.error("connector.maya_missing_for_grant", {
+      workspaceId: input.workspaceId,
+    });
+    throw new Error("Could not grant Maya access");
+  }
+
+  const { data: live } = await client
+    .from("connector_grants")
+    .select("id, capabilities")
+    .eq("account_id", input.accountId)
+    .eq("assistant_id", maya.id)
+    .is("revoked_at", null)
+    .maybeSingle<{ id: string; capabilities: string[] }>();
+
+  if (
+    live &&
+    MAYA_MAILBOX_CAPABILITIES.every((cap) => live.capabilities.includes(cap))
+  ) {
+    return;
+  }
+
+  if (live) {
+    await client
+      .from("connector_grants")
+      .update({ revoked_at: new Date().toISOString() })
+      .eq("id", live.id);
+  }
+
+  const { error } = await client.from("connector_grants").insert({
+    workspace_id: input.workspaceId,
+    account_id: input.accountId,
+    assistant_id: maya.id,
+    capabilities: [...MAYA_MAILBOX_CAPABILITIES],
+    granted_by: input.userId,
+  });
+
+  if (error) {
+    logger.error("connector.auto_grant_failed", {
+      accountId: input.accountId,
+      ...errorFields(error),
+    });
+    throw new Error("Could not grant Maya access");
+  }
 }
 
 /**

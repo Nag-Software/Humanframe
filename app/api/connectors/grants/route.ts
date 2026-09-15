@@ -8,14 +8,10 @@ import { getRequestScope } from "@/server/db/request-scope";
 /**
  * What an assistant may do with a connected mailbox.
  *
- * Connecting an account grants nothing on its own — that is the whole design —
- * so without this route a connected mailbox is inert and the assistant has no
- * way to be given access to it.
- *
- * Only the account's **owner** may write here, and ownership is re-checked
- * against the session on every call. A workspace admin cannot grant an
- * assistant access to a colleague's inbox, because membership was never the
- * thing that conferred access.
+ * Connecting auto-grants Maya read and send. This route is still how the
+ * owner withdraws that, or grants a different assistant. Ownership is
+ * re-checked against the session on every call. A workspace admin cannot
+ * grant an assistant access to a colleague's inbox.
  */
 const bodySchema = z.object({
   accountId: z.uuid(),

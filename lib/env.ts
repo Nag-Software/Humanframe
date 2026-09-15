@@ -22,6 +22,12 @@ const publicSchema = z.object({
   NEXT_PUBLIC_CALL_ENABLED: z.enum(["true", "false"]).default("false"),
   /** Whether the Connections settings section is offered. */
   NEXT_PUBLIC_CONNECTORS_ENABLED: z.enum(["true", "false"]).default("false"),
+  /**
+   * Whether the FaceTime prototype button is offered. Off by default, and
+   * only an affordance: the server checks `FACETIME_PROTOTYPE_ENABLED`
+   * before it will start one.
+   */
+  NEXT_PUBLIC_FACETIME_PROTOTYPE: z.enum(["true", "false"]).default("false"),
 });
 
 const serverSchema = z.object({
@@ -73,6 +79,12 @@ const serverSchema = z.object({
   // server/connectors/composio.ts.
   COMPOSIO_GMAIL_AUTH_CONFIG_ID: z.string().optional(),
   COMPOSIO_OUTLOOK_AUTH_CONFIG_ID: z.string().optional(),
+  // FaceTime prototype. Off unless an environment turns it on. The key never
+  // reaches the browser. A PAL id is created once by the setup script; this
+  // route will not mint faces or clone a voice.
+  FACETIME_PROTOTYPE_ENABLED: z.enum(["true", "false"]).default("false"),
+  TAVUS_API_KEY: z.string().min(1).optional(),
+  TAVUS_PAL_ID: z.string().min(1).optional(),
 });
 
 export const publicEnv = publicSchema.parse({
@@ -82,6 +94,7 @@ export const publicEnv = publicSchema.parse({
   NEXT_PUBLIC_MAYA_RUNTIME: process.env.NEXT_PUBLIC_MAYA_RUNTIME,
   NEXT_PUBLIC_CALL_ENABLED: process.env.NEXT_PUBLIC_CALL_ENABLED,
   NEXT_PUBLIC_CONNECTORS_ENABLED: process.env.NEXT_PUBLIC_CONNECTORS_ENABLED,
+  NEXT_PUBLIC_FACETIME_PROTOTYPE: process.env.NEXT_PUBLIC_FACETIME_PROTOTYPE,
 });
 
 type ServerEnv = z.infer<typeof serverSchema> & z.infer<typeof publicSchema>;
