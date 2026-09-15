@@ -11,13 +11,17 @@ import { renderNotification, settingsUrl, threadUrl } from "./email-template";
 import {
   claimNotifications,
   deferJob,
+  freezePayload,
   markFailed,
+  markNeedsReview,
   markSent,
   markSkipped,
   notificationBackoffSeconds,
   readSettings,
   wantsEvent,
+  withinDedupeWindow,
   NOTIFICATION_MAX_ATTEMPTS,
+  type FrozenPayload,
   type NotificationJob,
 } from "./notifications";
 import { isQuiet, nextSendableTime } from "./quiet-hours";
@@ -39,6 +43,7 @@ export type SendOutcome =
   | { status: "skipped"; jobId: string; reason: string }
   | { status: "deferred"; jobId: string; reason: string }
   | { status: "failed"; jobId: string; reason: string }
+  | { status: "needs_review"; jobId: string; reason: string }
   | { status: "no_work" };
 
 export type Deps = {
@@ -156,24 +161,58 @@ async function deliver(
     return { status: "deferred", jobId: job.id, reason: "no_app_origin" };
   }
 
-  const rendered = renderNotification({
-    event: job.event_type,
-    title: relevance.title,
-    threadUrl: threadUrl(origin, job.thread_id),
-    settingsUrl: settingsUrl(origin),
-  });
+  // 5. An ambiguous attempt past the provider's window cannot be retried on a
+  //    guess: Resend can no longer tell us whether the first one arrived, so
+  //    sending again risks a second email and dropping it risks silence.
+  if (job.last_outcome === "unknown" && !withinDedupeWindow(job, now)) {
+    await markNeedsReview(client, job, lease, "unknown_outcome_past_dedupe_window");
+    return {
+      status: "needs_review",
+      jobId: job.id,
+      reason: "unknown_outcome_past_dedupe_window",
+    };
+  }
 
-  const send = deps.send ?? sendEmail;
-  const result: SendResult = await send({
-    config,
-    payload: {
+  // 6. The body is built once and replayed verbatim. Resend refuses a key
+  //    reused with a modified body, and everything here can drift between
+  //    attempts: the address, the commitment's title, the configured sender.
+  let payload = job.frozen_payload;
+  if (!payload) {
+    const rendered = renderNotification({
+      event: job.event_type,
+      title: relevance.title,
+      threadUrl: threadUrl(origin, job.thread_id),
+      settingsUrl: settingsUrl(origin),
+    });
+    payload = {
       to: address,
+      from: config.from,
       subject: rendered.subject,
       html: rendered.html,
       text: rendered.text,
+    } satisfies FrozenPayload;
+
+    // Frozen before the send, so a crash cannot leave a job whose retry would
+    // construct something different.
+    await freezePayload(client, job, lease, payload, now);
+  } else if (!isAllowedRecipient(config, payload.to)) {
+    // The frozen recipient is authoritative, and it is checked again: an
+    // allowlist that tightened between attempts must still be obeyed.
+    await markSkipped(client, job, lease, "not_on_allowlist");
+    return { status: "skipped", jobId: job.id, reason: "not_on_allowlist" };
+  }
+
+  const send = deps.send ?? sendEmail;
+  const result: SendResult = await send({
+    config: { ...config, from: payload.from },
+    payload: {
+      to: payload.to,
+      subject: payload.subject,
+      html: payload.html,
+      text: payload.text,
     },
-    // Stable for the life of the job, which is what makes Resend's 24-hour
-    // window deduplicate our retries.
+    // Stable for the life of the job, and always paired with the frozen body,
+    // which is what makes Resend's 24-hour window deduplicate our retries.
     idempotencyKey: `humanframe-notification/${job.id}`,
     signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
   });
@@ -189,7 +228,7 @@ async function record(
   now: Date
 ): Promise<SendOutcome> {
   if (result.kind === "sent" || result.kind === "duplicate") {
-    await markSent(client, job, lease, result.providerMessageId);
+    await markSent(client, job, lease, result.providerMessageId, result.kind);
     return { status: "sent", jobId: job.id };
   }
 
@@ -213,7 +252,14 @@ async function record(
   // an unknown outcome is not a failure, and the idempotency key means a retry
   // inside Resend's 24-hour window cannot become a second email.
   const wait = notificationBackoffSeconds(job.attempt_count) * 1000;
-  await deferJob(client, job, lease, new Date(now.getTime() + wait), result.error);
+  await deferJob(
+    client,
+    job,
+    lease,
+    new Date(now.getTime() + wait),
+    result.error,
+    result.kind
+  );
   return { status: "deferred", jobId: job.id, reason: result.kind };
 }
 

@@ -458,6 +458,179 @@ async function main(): Promise<void> {
       check("the provider is not called at all", sender.calls.length === 0);
     }
 
+    // --- 11b. Retry safety: the payload is frozen at the first attempt ----------
+    {
+      await enableEmail(alpha);
+      const key = await seedJob(alpha, thread, "reminder");
+      const job = (await jobFor(key))!;
+
+      const first = scriptedSender([{ kind: "unknown", error: new Error("timeout") }]);
+      await sendNotification(job.id, {
+        client: admin, config: CONFIG, send: first.send, appOrigin: "https://app.test",
+      });
+
+      const frozen = await readJob(admin, job.id);
+      check("the payload is frozen on the first attempt",
+        Boolean(frozen?.frozen_payload), frozen?.frozen_payload === null);
+      check("the freeze time is recorded", Boolean(frozen?.frozen_at));
+      check("the ambiguous outcome is remembered",
+        frozen?.last_outcome === "unknown", frozen?.last_outcome);
+
+      // Everything that feeds the body changes underneath us.
+      await admin.from("users").update({ email: "moved@humanframe.test" })
+        .eq("id", alpha.userId);
+      await admin
+        .from("notification_outbox")
+        .update({ available_at: new Date(Date.now() - 1000).toISOString() })
+        .eq("id", job.id);
+
+      const second = scriptedSender([{ kind: "duplicate", providerMessageId: "msg_first" }]);
+      await sendNotification(job.id, {
+        client: admin,
+        config: { ...CONFIG, from: "Someone Else <other@humanframe.test>" },
+        send: second.send,
+        appOrigin: "https://elsewhere.test",
+      });
+
+      check("the retry replays the frozen recipient, not the new one",
+        second.calls[0]?.to === first.calls[0]?.to,
+        { first: first.calls[0]?.to, second: second.calls[0]?.to });
+      check("the retry replays the frozen body byte for byte",
+        second.calls[0]?.html === first.calls[0]?.html);
+      check("the retry carries the same idempotency key",
+        second.calls[0]?.key === first.calls[0]?.key);
+
+      await admin.from("users").update({ email: `notify-a@humanframe.test` })
+        .eq("id", alpha.userId);
+    }
+
+    // --- 11c. An unknown outcome past the window is parked, not resent ----------
+    {
+      const key = await seedJob(alpha, thread, "reminder");
+      const job = (await jobFor(key))!;
+      const first = scriptedSender([{ kind: "unknown", error: new Error("timeout") }]);
+      await sendNotification(job.id, {
+        client: admin, config: CONFIG, send: first.send, appOrigin: "https://app.test",
+      });
+
+      // A day and a half later: Resend has forgotten the key, so it can no
+      // longer tell us whether the first attempt arrived.
+      await admin
+        .from("notification_outbox")
+        .update({
+          available_at: new Date(Date.now() - 1000).toISOString(),
+          frozen_at: new Date(Date.now() - 36 * 60 * 60_000).toISOString(),
+        })
+        .eq("id", job.id);
+
+      const later = scriptedSender([{ kind: "sent", providerMessageId: "msg_second" }]);
+      const outcome = await sendNotification(job.id, {
+        client: admin, config: CONFIG, send: later.send, appOrigin: "https://app.test",
+      });
+      check("an ambiguous job past the dedupe window is not sent again",
+        outcome.status === "needs_review", outcome);
+      check("nothing reaches the provider", later.calls.length === 0);
+
+      const parked = await readJob(admin, job.id);
+      check("it is parked for a person to decide", parked?.status === "needs_review",
+        { status: parked?.status });
+      const { data: reason } = await admin
+        .from("notification_outbox")
+        .select("review_reason")
+        .eq("id", job.id)
+        .maybeSingle<{ review_reason: string }>();
+      check("the reason is recorded",
+        reason?.review_reason === "unknown_outcome_past_dedupe_window",
+        reason?.review_reason);
+    }
+
+    // --- 11d. A rate limit past the window is still safe to retry ---------------
+    {
+      const key = await seedJob(alpha, thread, "reminder");
+      const job = (await jobFor(key))!;
+      const limited = scriptedSender([{ kind: "retry", status: 429, error: { message: "slow down" } }]);
+      await sendNotification(job.id, {
+        client: admin, config: CONFIG, send: limited.send, appOrigin: "https://app.test",
+      });
+
+      await admin
+        .from("notification_outbox")
+        .update({
+          available_at: new Date(Date.now() - 1000).toISOString(),
+          frozen_at: new Date(Date.now() - 36 * 60 * 60_000).toISOString(),
+        })
+        .eq("id", job.id);
+
+      const retry = scriptedSender([{ kind: "sent", providerMessageId: "msg_ok" }]);
+      const outcome = await sendNotification(job.id, {
+        client: admin, config: CONFIG, send: retry.send, appOrigin: "https://app.test",
+      });
+      check("a rate-limited attempt is definitive, so a later retry still sends",
+        outcome.status === "sent", outcome);
+      check("it sent once", retry.calls.length === 1);
+    }
+
+    // --- 11e. Opt-in and relevance are re-checked on every attempt --------------
+    {
+      const commitment = await createCommitment(
+        { client: admin, workspaceId: alpha.workspaceId, assistantId: alpha.assistantId },
+        {
+          threadId: thread,
+          title: "still live at first attempt",
+          dueAt: new Date().toISOString(),
+          dueTimezone: "Europe/Oslo",
+          dedupeKey: `recheck-${randomUUID()}`,
+        }
+      );
+      const key = await seedJob(alpha, thread, "reminder", {
+        subjectType: "commitment",
+        subjectId: commitment.id,
+      });
+      const job = (await jobFor(key))!;
+      const first = scriptedSender([{ kind: "unknown", error: new Error("timeout") }]);
+      await sendNotification(job.id, {
+        client: admin, config: CONFIG, send: first.send, appOrigin: "https://app.test",
+      });
+      check("the first attempt went out", first.calls.length === 1);
+
+      // Between attempts the user cancels it and turns email off.
+      await admin.from("commitments").update({ status: "cancelled" }).eq("id", commitment.id);
+      await admin
+        .from("notification_outbox")
+        .update({ available_at: new Date(Date.now() - 1000).toISOString() })
+        .eq("id", job.id);
+
+      const second = scriptedSender([{ kind: "sent", providerMessageId: "nope" }]);
+      const outcome = await sendNotification(job.id, {
+        client: admin, config: CONFIG, send: second.send, appOrigin: "https://app.test",
+      });
+      check("a retry re-checks relevance and stops",
+        outcome.status === "skipped" && outcome.reason === "commitment_cancelled", outcome);
+      check("the retry never reaches the provider", second.calls.length === 0);
+
+      // And the same for opt-in, on a fresh job.
+      const optInKey = await seedJob(alpha, thread, "reminder");
+      const optIn = (await jobFor(optInKey))!;
+      const attempt = scriptedSender([{ kind: "unknown", error: new Error("timeout") }]);
+      await sendNotification(optIn.id, {
+        client: admin, config: CONFIG, send: attempt.send, appOrigin: "https://app.test",
+      });
+      await enableEmail(alpha, { email_enabled: false });
+      await admin
+        .from("notification_outbox")
+        .update({ available_at: new Date(Date.now() - 1000).toISOString() })
+        .eq("id", optIn.id);
+      const afterOptOut = scriptedSender([{ kind: "sent", providerMessageId: "nope" }]);
+      const optOutOutcome = await sendNotification(optIn.id, {
+        client: admin, config: CONFIG, send: afterOptOut.send, appOrigin: "https://app.test",
+      });
+      check("a retry after the user opts out sends nothing",
+        optOutOutcome.status === "skipped" && optOutOutcome.reason === "disabled",
+        optOutOutcome);
+      check("no email goes out after opting out", afterOptOut.calls.length === 0);
+      await enableEmail(alpha);
+    }
+
     // --- 12. The email itself ---------------------------------------------------
     {
       const rendered = renderNotification({

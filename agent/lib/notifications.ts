@@ -25,7 +25,19 @@ export type NotificationStatus =
   | "sending"
   | "sent"
   | "failed"
-  | "skipped";
+  | "skipped"
+  /** Ambiguous, and past the window where the provider could still tell us. */
+  | "needs_review";
+
+/** How the previous attempt ended. `unknown` is the one that constrains a retry. */
+export type LastOutcome = "sent" | "duplicate" | "refused" | "retry" | "unknown";
+
+/**
+ * Resend keeps an idempotency key for 24 hours. Past that the provider can no
+ * longer collapse a retry into the original send, so an ambiguous job is parked
+ * rather than guessed at.
+ */
+export const PROVIDER_DEDUPE_WINDOW_MS = 24 * 60 * 60_000;
 
 export type NotificationJob = {
   id: string;
@@ -43,6 +55,18 @@ export type NotificationJob = {
   attempt_count: number;
   lease_token: string | null;
   provider_message_id: string | null;
+  frozen_payload: FrozenPayload | null;
+  frozen_at: string | null;
+  last_outcome: LastOutcome | null;
+};
+
+/** The exact request body the first attempt sent, replayed on every retry. */
+export type FrozenPayload = {
+  to: string;
+  from: string;
+  subject: string;
+  html: string;
+  text: string;
 };
 
 export type NotificationSettings = {
@@ -58,7 +82,8 @@ export type NotificationSettings = {
 const JOB_COLUMNS =
   "id, workspace_id, assistant_id, recipient_user_id, thread_id, " +
   "source_message_id, event_type, subject_type, subject_id, dedupe_key, " +
-  "status, available_at, attempt_count, lease_token, provider_message_id";
+  "status, available_at, attempt_count, lease_token, provider_message_id, " +
+  "frozen_payload, frozen_at, last_outcome";
 
 export function notificationBackoffSeconds(attempt: number): number {
   const index =
@@ -125,15 +150,70 @@ export async function updateJobWithLease(
   return (data?.length ?? 0) > 0;
 }
 
+/**
+ * Freezes what this job will send, before it is sent.
+ *
+ * Written ahead of the request so a crash cannot leave a job whose retry would
+ * build a different body — which the provider would refuse with a 409 rather
+ * than deduplicate.
+ */
+export async function freezePayload(
+  client: SupabaseClient,
+  job: NotificationJob,
+  leaseToken: string,
+  payload: FrozenPayload,
+  at: Date
+): Promise<boolean> {
+  return updateJobWithLease(client, job, leaseToken, {
+    frozen_payload: payload,
+    frozen_at: at.toISOString(),
+  });
+}
+
+/**
+ * Is the provider's deduplication window still open for this job?
+ *
+ * Counted from the first attempt, because that is when the key was first used.
+ */
+export function withinDedupeWindow(job: NotificationJob, now: Date): boolean {
+  if (!job.frozen_at) {
+    return true;
+  }
+  return now.getTime() - new Date(job.frozen_at).getTime() < PROVIDER_DEDUPE_WINDOW_MS;
+}
+
+/**
+ * Parks a job nobody can safely decide about.
+ *
+ * Reached when the last attempt ended unknown and the provider window has since
+ * closed: sending again risks a second email, and dropping it risks silence. A
+ * person decides.
+ */
+export function markNeedsReview(
+  client: SupabaseClient,
+  job: NotificationJob,
+  leaseToken: string,
+  reason: string
+): Promise<boolean> {
+  return updateJobWithLease(client, job, leaseToken, {
+    status: "needs_review",
+    review_reason: reason,
+    lease_token: null,
+    lease_until: null,
+  });
+}
+
 export function markSent(
   client: SupabaseClient,
   job: NotificationJob,
   leaseToken: string,
-  providerMessageId: string | null
+  providerMessageId: string | null,
+  outcome: LastOutcome = "sent"
 ): Promise<boolean> {
   return updateJobWithLease(client, job, leaseToken, {
     status: "sent",
     provider_message_id: providerMessageId,
+    last_outcome: outcome,
     sent_at: new Date().toISOString(),
     lease_token: null,
     lease_until: null,
@@ -158,11 +238,13 @@ export function markFailed(
   client: SupabaseClient,
   job: NotificationJob,
   leaseToken: string,
-  error: unknown
+  error: unknown,
+  outcome: LastOutcome = "refused"
 ): Promise<boolean> {
   return updateJobWithLease(client, job, leaseToken, {
     status: "failed",
     last_error: serialise(error),
+    last_outcome: outcome,
     lease_token: null,
     lease_until: null,
   });
@@ -174,12 +256,14 @@ export function deferJob(
   job: NotificationJob,
   leaseToken: string,
   availableAt: Date,
-  error?: unknown
+  error?: unknown,
+  outcome?: LastOutcome
 ): Promise<boolean> {
   return updateJobWithLease(client, job, leaseToken, {
     status: "pending",
     available_at: availableAt.toISOString(),
     last_error: error === undefined ? null : serialise(error),
+    ...(outcome ? { last_outcome: outcome } : {}),
     lease_token: null,
     lease_until: null,
   });

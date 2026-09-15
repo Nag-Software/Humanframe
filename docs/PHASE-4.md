@@ -830,6 +830,35 @@ would lose provider-side deduplication, which is the one hole and the reason the
 cap exists. A timeout or a reset is recorded as **unknown**, never as "not
 sent": the job is deferred and the same key covers the retry.
 
+## Retry safety
+
+A retry is only safe if it is *the same request*. Resend deduplicates on the key
+**and the body**, so a key reused with a modified body is refused with 409
+rather than collapsed. Four rules follow:
+
+- **The payload is frozen at the first attempt** — recipient, sender, subject,
+  html, text — and replayed verbatim afterwards. Everything feeding it can drift
+  between attempts: the user changes their address, a commitment is retitled,
+  `NOTIFICATIONS_FROM` changes on a redeploy. The freeze is written *before* the
+  request leaves, so a crash cannot leave a job whose retry would build
+  something different.
+- **The 24-hour window runs from `frozen_at`, not from the row's creation.** A
+  job created at 09:00 and first attempted at 20:00 has its window run to 20:00
+  the following day.
+- **An ambiguous attempt past that window is parked, not repeated.** When the
+  last outcome was `unknown` and the provider can no longer tell us whether the
+  first one arrived, sending again risks a second email and dropping it risks
+  silence. The job goes to `needs_review` with its reason, and a person decides.
+  A rate-limited attempt (`429`) is *definitive* — the request was not processed
+  — so that one stays retryable however long it has been.
+- **A 5xx is ambiguous, not retryable.** The request reached Resend and may have
+  been accepted before it failed to answer, so it is classified with timeouts
+  rather than with rate limits.
+
+Opt-in, per-event preferences, relevance and the allowlist are re-checked before
+*every* attempt, including retries against a frozen payload. A user who cancels
+a commitment or turns email off between attempts stops the next one.
+
 ## Safety properties
 
 - **Email is opt-in.** No settings row means no email; the default is off.
@@ -853,12 +882,15 @@ sent": the job is deferred and the same key covers the retry.
 
 ## Tests
 
-`pnpm test:notifications` — 52/52, no network, no model calls. Covers
+`pnpm test:notifications` — 69/69, no network, no model calls. Covers
 idempotent creation, concurrent claims, expired leases, a crash before sending,
 a timeout after a possible send, retry and permanent failure, quiet hours
 including a DST boundary, disabled notifications per-type and globally, a
-cancelled commitment, the escaped template, and tenant isolation on both the
-browser path and the service-role path.
+cancelled commitment, the escaped template, tenant isolation on both the browser
+path and the service-role path, and the retry-safety rules above: the frozen
+payload surviving a changed address, sender and origin; an ambiguous job past the
+window parked as `needs_review`; a rate-limited one still retryable; and opt-in
+and relevance re-checked on the retry.
 
 `pnpm test:live:notifications` — opt-in, sends one real email. Skips loudly
 unless `RESEND_API_KEY`, `NOTIFICATIONS_ENABLED=true`, and a

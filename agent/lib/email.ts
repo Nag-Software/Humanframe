@@ -113,8 +113,15 @@ export async function sendEmail(input: {
     if (response.status === 409) {
       return { kind: "refused", status: 409, error };
     }
-    if (response.status === 429 || response.status >= 500) {
+    // A rate limit is definitive: the request was not processed, so a retry is
+    // safe whatever the provider window says.
+    if (response.status === 429) {
       return { kind: "retry", status: response.status, error };
+    }
+    // A 5xx is not. The request reached Resend and may have been accepted
+    // before it failed to answer, so it is treated like a timeout.
+    if (response.status >= 500) {
+      return { kind: "unknown", error: { status: response.status, body: error } };
     }
     return { kind: "refused", status: response.status, error };
   } catch (error) {
