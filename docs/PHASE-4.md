@@ -695,9 +695,24 @@ design rests on, and phase 4 is not finished until it passes. It runs on
    heartbeat found nothing to do. Then delete a timer's run and confirm the
    heartbeat recovers that commitment.
 
-**P4 — cron cadence.** Read back Settings → Cron Jobs after deploy. Now that
-the timer is the primary trigger, cadence bounds only how fast the reconciler
-notices a lost timer — hours is tolerable, a day is not ideal but not broken.
+**P4 — cron cadence. Answered: Hobby allows one run per day.** Vercel refuses
+the deployment outright, rather than silently degrading:
+
+> Hobby accounts are limited to daily cron jobs. This cron expression
+> (`* * * * *`) would run more than once per day.
+
+The heartbeat is therefore `0 6 * * *`. Because the timer is the primary
+trigger, this bounds only how quickly a *lost* timer is noticed — but it raises
+the stakes on P3: if detached timers do not start at runtime, this cadence
+becomes the wake latency, and a reminder due Friday morning could arrive a day
+late. That is not an acceptable product, so P3 is no longer just a durability
+check — it is what makes a daily reconciler safe. On Pro, `*/5 * * * *` returns
+recovery to minutes and nothing else changes.
+
+A second reconciler trigger is available if it is ever needed without Pro:
+sweeping this workspace's overdue commitments when the user starts a turn.
+It costs no cron entry and covers the common case — the user comes back and
+something was missed — at the price of turn latency. Not built; noted.
 
 **What Preview needs before P3 can start.** `lib/env.ts` fails closed, and the
 `NEXT_PUBLIC_*` pair is inlined at build time, so all of these must exist in the

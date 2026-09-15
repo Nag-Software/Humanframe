@@ -14,9 +14,20 @@ import { sweepWakes } from "../lib/wake";
  * through exactly the same atomic function the timers use, so a sweep that
  * overlaps a timer cannot double-deliver: one of them gets the lease and the
  * other gets nothing.
+ *
+ * Daily, because Vercel's Hobby plan rejects any cron that would run more than
+ * once a day — a minute-level expression fails the deployment outright. On Pro,
+ * change this to "*\/5 * * * *": nothing else about the design depends on it,
+ * and recovery would go from up to a day to a few minutes.
+ *
+ * The cost of a daily sweep is carried entirely by the timers. If a
+ * commitment's own workflow fires, the user never waits on this at all. If
+ * timers turn out not to start, this cadence becomes the wake latency, which
+ * would not be an acceptable product — so proving the timer at runtime (P3) is
+ * what makes a daily reconciler safe.
  */
 export default defineSchedule({
-  cron: "* * * * *",
+  cron: "0 6 * * *",
   run({ waitUntil }) {
     waitUntil(
       (async () => {
