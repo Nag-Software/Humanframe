@@ -19,7 +19,7 @@ importers:
         version: 0.0.5(@types/react@19.3.0)(react@19.2.8)(zod@4.6.4)
       '@assistant-ui/eve':
         specifier: 0.0.17
-        version: 0.0.17(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(assistant-cloud@0.2.0)(eve@0.54.5(ai@7.0.99(zod@4.6.4)))(react@19.2.8)
+        version: 0.0.17(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(assistant-cloud@0.2.0)(eve@0.54.5(ai@7.0.99(zod@4.6.4))(microsandbox@0.6.18))(react@19.2.8)
       '@assistant-ui/react':
         specifier: ^0.15.19
         version: 0.15.19(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(use-sync-external-store@1.7.0(react@19.2.8))
@@ -56,9 +56,12 @@ importers:
       cn:
         specifier: ^0.3.0
         version: 0.3.0
+      composio:
+        specifier: ^1.0.0
+        version: 1.0.0
       eve:
         specifier: 0.54.5
-        version: 0.54.5(ai@7.0.99(zod@4.6.4))
+        version: 0.54.5(ai@7.0.99(zod@4.6.4))(microsandbox@0.6.18)
       lucide-react:
         specifier: ^1.45.0
         version: 1.45.0(react@19.2.8)
@@ -120,6 +123,9 @@ importers:
       eslint-config-next:
         specifier: 16.3.5
         version: 16.3.5(@typescript-eslint/parser@8.70.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
+      microsandbox:
+        specifier: ^0.6.18
+        version: 0.6.18
       supabase:
         specifier: ^2.117.0
         version: 2.117.0
@@ -1909,6 +1915,38 @@ packages:
       '@opentelemetry/api':
         optional: true
 
+  '@superradcompany/microsandbox-darwin-arm64@0.6.18':
+    resolution: {integrity: sha512-C+bz9+v8JXQ6BG0FXbiTywM/dSNjIFifF3fOh5IU3JW3OiB0HcgjBiVRFWpZYk/pV6eKhZTYSkUiIWwYc3SRNA==}
+    engines: {node: '>= 22'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@superradcompany/microsandbox-linux-arm64-gnu@0.6.18':
+    resolution: {integrity: sha512-UVtFm32CExLeB0VhiLIW+mvVCkyWi6Yg+1AYWQAvfXj8ngDYEprZz/0Kksp/T8lAnV5hFIYZ2ZrPs0jAGbAR6A==}
+    engines: {node: '>= 22'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@superradcompany/microsandbox-linux-x64-gnu@0.6.18':
+    resolution: {integrity: sha512-b9Mu+tu1Vq407c8sr7scNOxBgGpJX/Znd4NGFQ/Dx44SS6bHU3pjUEAdso3IpEB2Cx9nrGIBtBdaRrVw1ro+6w==}
+    engines: {node: '>= 22'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@superradcompany/microsandbox-win32-arm64-msvc@0.6.18':
+    resolution: {integrity: sha512-QDW9JfnTHd4lbFpms3y+c5oyEdOXK1kZCNPONm6nVrdz1Wr+UVy+zMiMadzL1AJgG4rF3Tg6WT9Xa1j0ekPk6w==}
+    engines: {node: '>= 22'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@superradcompany/microsandbox-win32-x64-msvc@0.6.18':
+    resolution: {integrity: sha512-PS1vBcboB4QwZjruBouRApAsqyhUk9U1c2w+hQOCzYzFMoWVsSyUanAwuswiloqyoj2SREwBG5wY8jnAJFzr2g==}
+    engines: {node: '>= 22'}
+    cpu: [x64]
+    os: [win32]
+
   '@swc/helpers@0.5.23':
     resolution: {integrity: sha512-5lSsMOTXURePglDfvuAQUqkGek9Hg2kksOYay2m0+XR++b2NWYL/4sWyuvVBIs8oKnJaxkdi9whaL/sqN13afw==}
 
@@ -2561,6 +2599,9 @@ packages:
   commander@14.0.3:
     resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
     engines: {node: '>=20'}
+
+  composio@1.0.0:
+    resolution: {integrity: sha512-0bqOGvRywQ9XK8LUNAwXyAW5lfcXVq9m53Rp+QZzVxPXnG4RcjmijwP8Gy1GzCD1OCc6jGr+0npdCRNVxXJh2g==}
 
   concat-map@0.0.1:
     resolution: {integrity: sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==}
@@ -3889,6 +3930,11 @@ packages:
     resolution: {integrity: sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==}
     engines: {node: '>=8.6'}
 
+  microsandbox@0.6.18:
+    resolution: {integrity: sha512-M38LkxCk6ppz7qXuQ+bHAgahX4bWNgNdrN5OIFpm7OVV1Bqfpvbwog+zP/QvIiImNHgIleB7M8dU1Kd4jTdwvg==}
+    engines: {node: '>= 22'}
+    hasBin: true
+
   mime-db@1.54.0:
     resolution: {integrity: sha512-aU5EJuIN2WDemCcAp2vFBfp/m4EAhWJnUNSSw0ixs7/kXbd6Pg64EmwJkNdFhB8aWt1sH2CTXrLxo/iAGV3oPQ==}
     engines: {node: '>= 0.6'}
@@ -5067,11 +5113,11 @@ snapshots:
       - ioredis
       - redis
 
-  '@assistant-ui/eve@0.0.17(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(assistant-cloud@0.2.0)(eve@0.54.5(ai@7.0.99(zod@4.6.4)))(react@19.2.8)':
+  '@assistant-ui/eve@0.0.17(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(assistant-cloud@0.2.0)(eve@0.54.5(ai@7.0.99(zod@4.6.4))(microsandbox@0.6.18))(react@19.2.8)':
     dependencies:
       '@assistant-ui/core': 0.3.18(@assistant-ui/store@0.3.13(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(react@19.2.8))(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(assistant-cloud@0.2.0)(react@19.2.8)
       '@assistant-ui/store': 0.3.13(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(react@19.2.8)
-      eve: 0.54.5(ai@7.0.99(zod@4.6.4))
+      eve: 0.54.5(ai@7.0.99(zod@4.6.4))(microsandbox@0.6.18)
       react: 19.2.8
     optionalDependencies:
       '@types/react': 19.3.0
@@ -6709,6 +6755,21 @@ snapshots:
       '@supabase/realtime-js': 2.116.0
       '@supabase/storage-js': 2.116.0
 
+  '@superradcompany/microsandbox-darwin-arm64@0.6.18':
+    optional: true
+
+  '@superradcompany/microsandbox-linux-arm64-gnu@0.6.18':
+    optional: true
+
+  '@superradcompany/microsandbox-linux-x64-gnu@0.6.18':
+    optional: true
+
+  '@superradcompany/microsandbox-win32-arm64-msvc@0.6.18':
+    optional: true
+
+  '@superradcompany/microsandbox-win32-x64-msvc@0.6.18':
+    optional: true
+
   '@swc/helpers@0.5.23':
     dependencies:
       tslib: 2.8.1
@@ -7284,6 +7345,8 @@ snapshots:
 
   commander@14.0.3: {}
 
+  composio@1.0.0: {}
+
   concat-map@0.0.1: {}
 
   conf@10.2.0:
@@ -7839,11 +7902,13 @@ snapshots:
 
   etag@1.8.1: {}
 
-  eve@0.54.5(ai@7.0.99(zod@4.6.4)):
+  eve@0.54.5(ai@7.0.99(zod@4.6.4))(microsandbox@0.6.18):
     dependencies:
       ai: 7.0.99(zod@4.6.4)
       nitro: 3.0.260903-beta
       undici: 8.9.0
+    optionalDependencies:
+      microsandbox: 0.6.18
 
   eventsource-parser@3.1.1: {}
 
@@ -8926,6 +8991,14 @@ snapshots:
     dependencies:
       braces: 3.0.3
       picomatch: 2.3.2
+
+  microsandbox@0.6.18:
+    optionalDependencies:
+      '@superradcompany/microsandbox-darwin-arm64': 0.6.18
+      '@superradcompany/microsandbox-linux-arm64-gnu': 0.6.18
+      '@superradcompany/microsandbox-linux-x64-gnu': 0.6.18
+      '@superradcompany/microsandbox-win32-arm64-msvc': 0.6.18
+      '@superradcompany/microsandbox-win32-x64-msvc': 0.6.18
 
   mime-db@1.54.0: {}
 

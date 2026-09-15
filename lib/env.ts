@@ -20,6 +20,8 @@ const publicSchema = z.object({
    * so turning this on alone cannot place a call.
    */
   NEXT_PUBLIC_CALL_ENABLED: z.enum(["true", "false"]).default("false"),
+  /** Whether the Connections settings section is offered. */
+  NEXT_PUBLIC_CONNECTORS_ENABLED: z.enum(["true", "false"]).default("false"),
 });
 
 const serverSchema = z.object({
@@ -62,6 +64,15 @@ const serverSchema = z.object({
   CALL_MAX_PER_DAY: z.coerce.number().int().positive().default(20),
   CALL_MAX_CONCURRENT: z.coerce.number().int().positive().default(1),
   CALL_MAX_MINUTES: z.coerce.number().int().positive().default(15),
+  // Email connectors (Gmail, Outlook) brokered by Composio. Server-only: the
+  // key can mint authorization links and run tools against real mailboxes.
+  COMPOSIO_API_KEY: z.string().min(1).optional(),
+  CONNECTORS_ENABLED: z.enum(["true", "false"]).default("false"),
+  // Auth configs pinned to least-privilege scopes. Named explicitly because
+  // Composio's defaults ask for far more than the four tools we expose — see
+  // server/connectors/composio.ts.
+  COMPOSIO_GMAIL_AUTH_CONFIG_ID: z.string().optional(),
+  COMPOSIO_OUTLOOK_AUTH_CONFIG_ID: z.string().optional(),
 });
 
 export const publicEnv = publicSchema.parse({
@@ -70,6 +81,7 @@ export const publicEnv = publicSchema.parse({
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   NEXT_PUBLIC_MAYA_RUNTIME: process.env.NEXT_PUBLIC_MAYA_RUNTIME,
   NEXT_PUBLIC_CALL_ENABLED: process.env.NEXT_PUBLIC_CALL_ENABLED,
+  NEXT_PUBLIC_CONNECTORS_ENABLED: process.env.NEXT_PUBLIC_CONNECTORS_ENABLED,
 });
 
 type ServerEnv = z.infer<typeof serverSchema> & z.infer<typeof publicSchema>;

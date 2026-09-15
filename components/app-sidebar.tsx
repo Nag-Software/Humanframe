@@ -4,6 +4,12 @@ import * as React from "react"
 
 import { NavMain } from "@/components/nav-main"
 import { NavUser } from "@/components/nav-user"
+import {
+  SETTINGS_QUERY,
+  SettingsDialog,
+  isSettingsTabId,
+  type SettingsTabId,
+} from "@/components/settings-dialog"
 import { TeamSwitcher } from "@/components/team-switcher"
 import {
   Sidebar,
@@ -12,7 +18,13 @@ import {
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar"
-import { TerminalSquareIcon, CalendarDaysIcon, ListTodoIcon, LayoutDashboardIcon } from "lucide-react"
+import {
+  CalendarDaysIcon,
+  LayoutDashboardIcon,
+  ListTodoIcon,
+  Settings2Icon,
+  TerminalSquareIcon,
+} from "lucide-react"
 import Image from "next/image"
 
 import { useTranslations } from "@/components/i18n-provider"
@@ -30,6 +42,32 @@ export function AppSidebar({
   notificationSettings: NotificationSettingsValues
 }) {
   const t = useTranslations()
+  const [settingsOpen, setSettingsOpen] = React.useState(false)
+  const [settingsTab, setSettingsTab] =
+    React.useState<SettingsTabId>("account")
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const tab = params.get(SETTINGS_QUERY)
+    if (!isSettingsTabId(tab)) {
+      return
+    }
+    // Query is only readable after hydration; opening during render would
+    // mismatch the server HTML.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL after mount
+    setSettingsTab(tab)
+    setSettingsOpen(true)
+    params.delete(SETTINGS_QUERY)
+    const query = params.toString()
+    const next = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`
+    window.history.replaceState(null, "", next)
+  }, [])
+
+  function openSettings(tab: SettingsTabId = "account") {
+    setSettingsTab(tab)
+    setSettingsOpen(true)
+  }
+
   const navMain = [
     {
       title: t.nav.overview,
@@ -58,6 +96,12 @@ export function AppSidebar({
       url: "/calendar",
       icon: <CalendarDaysIcon />,
     },
+    {
+      title: t.nav.settings,
+      icon: <Settings2Icon />,
+      isActive: settingsOpen,
+      onClick: () => openSettings(),
+    },
   ]
 
   return (
@@ -85,13 +129,18 @@ export function AppSidebar({
         <NavMain items={navMain} label={t.nav.platform} />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser
-          user={user}
-          plan={plan}
-          notificationSettings={notificationSettings}
-        />
+        <NavUser user={user} onOpenSettings={openSettings} />
       </SidebarFooter>
       <SidebarRail />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        tab={settingsTab}
+        onTabChange={setSettingsTab}
+        user={user}
+        plan={plan}
+        notificationSettings={notificationSettings}
+      />
     </Sidebar>
   )
 }

@@ -5,9 +5,11 @@ import {
   BadgeCheckIcon,
   BellIcon,
   CreditCardIcon,
+  LinkIcon,
   SparklesIcon,
 } from "lucide-react"
 
+import { ConnectorStatus } from "@/components/connector-status"
 import { useTranslations } from "@/components/i18n-provider"
 import { LanguageSwitcher } from "@/components/language-switcher"
 import { NotificationSettingsForm } from "@/components/notification-settings-form"
@@ -47,13 +49,14 @@ export const SETTINGS_TABS = [
   { id: "account", icon: BadgeCheckIcon },
   { id: "billing", icon: CreditCardIcon },
   { id: "notifications", icon: BellIcon },
+  { id: "connections", icon: LinkIcon },
 ] as const
 
 export type SettingsTabId = (typeof SETTINGS_TABS)[number]["id"]
 
 export const SETTINGS_NAV = [
   { items: [SETTINGS_TABS[0]] },
-  { items: [SETTINGS_TABS[1], SETTINGS_TABS[2], SETTINGS_TABS[3]] },
+  { items: [SETTINGS_TABS[1], SETTINGS_TABS[2], SETTINGS_TABS[3], SETTINGS_TABS[4]] },
 ] as const
 
 export const SETTINGS_QUERY = "settings"
@@ -208,6 +211,9 @@ function SettingsTabContent({
   if (tab === "billing") {
     return <BillingPanel plan={plan} t={t} />
   }
+  if (tab === "connections") {
+    return <ConnectionsPanel t={t} />
+  }
   return (
     <NotificationsPanel
       t={t}
@@ -337,5 +343,16 @@ function TabIntro({
       <h2 className="text-sm font-medium">{title}</h2>
       <p className="text-muted-foreground text-sm">{description}</p>
     </div>
+  )
+}
+
+function ConnectionsPanel({ t }: { t: Dictionary }) {
+  const copy = t.settings.connections
+
+  return (
+    <section className="flex flex-col gap-4">
+      <TabIntro title={copy.title} description={copy.description} />
+      <ConnectorStatus />
+    </section>
   )
 }

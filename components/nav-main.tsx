@@ -23,7 +23,8 @@ export function NavMain({
 }: {
   items: {
     title: string
-    url: string
+    url?: string
+    onClick?: () => void
     icon?: React.ReactNode
     isActive?: boolean
     items?: {
@@ -46,7 +47,13 @@ export function NavMain({
                 <SidebarMenuButton
                   tooltip={item.title}
                   isActive={item.isActive}
-                  render={<a href={item.url} />}
+                  render={
+                    item.onClick ? (
+                      <button type="button" onClick={item.onClick} />
+                    ) : (
+                      <a href={item.url} />
+                    )
+                  }
                 >
                   {item.icon}
                   <span>{item.title}</span>
