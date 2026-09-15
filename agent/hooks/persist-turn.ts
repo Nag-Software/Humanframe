@@ -1,6 +1,7 @@
 import { defineHook } from "eve/hooks";
 
 import { resolveSessionTarget, type SessionTarget } from "../lib/session-target";
+import { isWakeMessage } from "../lib/wake";
 
 /**
  * Projects an eve run into Supabase.
@@ -28,8 +29,16 @@ export default defineHook({
             }
       );
 
+      // A wake is Humanframe talking to itself: it is stored so a retry can
+      // find its marker, but on the system channel, so the UI never renders it
+      // as something the user said.
+      const first = parts.find((part) => part.type === "text");
+      const isWake =
+        typeof first?.text === "string" && isWakeMessage(first.text);
+
       await writeMessage(target, {
         role: "user",
+        channel: isWake ? "system" : "chat",
         content: parts.length > 0 ? parts : [{ type: "text", text: "" }],
         sourceMessageId: eventId(event),
         createdAt: eventTime(event),
@@ -187,6 +196,7 @@ async function writeMessage(
   target: SessionTarget,
   message: {
     role: "user" | "assistant";
+    channel?: "chat" | "system";
     content: unknown[];
     sourceMessageId?: string;
     createdAt: string;
@@ -199,7 +209,7 @@ async function writeMessage(
       workspace_id: target.workspaceId,
       assistant_id: target.assistantId,
       thread_id: target.threadId,
-      channel: "chat",
+      channel: message.channel ?? "chat",
       role: message.role,
       content: message.content,
       source_message_id: message.sourceMessageId ?? null,

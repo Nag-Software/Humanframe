@@ -2,6 +2,8 @@ import { createServerClient } from "@supabase/ssr";
 import { type AuthFn, localDev, vercelOidc } from "eve/channels/auth";
 import { eveChannel } from "eve/channels/eve";
 
+import { internalDeployment } from "../lib/internal-auth";
+
 /**
  * Verifies the caller's Supabase session. The eve routes are same-origin
  * (mounted by withEve), so the browser sends the auth cookie with every
@@ -73,8 +75,15 @@ function parseCookieHeader(header: string): { name: string; value: string }[] {
     .filter((cookie): cookie is { name: string; value: string } => cookie !== null);
 }
 
-// Ordered walk: a real user session first, then Vercel's internal callers, then
-// the local dev server. Anything else is rejected — eve fails closed.
+// Ordered walk: a real user session first, then this deployment delivering a
+// wake to itself, then Vercel's internal callers, then the local dev server.
+// Anything else is rejected — eve fails closed.
+//
+// internalDeployment() comes before vercelOidc() so a wake is recognised as the
+// deliverer — a scope-free service principal — rather than as a generic Vercel
+// caller. It only answers requests that claim to be us, and it checks the
+// token's environment as well as its project, which vercelOidc() deliberately
+// does not.
 export default eveChannel({
-  auth: [supabaseSession(), vercelOidc(), localDev()],
+  auth: [supabaseSession(), internalDeployment(), vercelOidc(), localDev()],
 });

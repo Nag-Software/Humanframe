@@ -101,6 +101,7 @@ export async function ensureThreadForSession(
 ): Promise<string> {
   const existing = await findThreadIdBySession(scope, input.eveSessionId);
   if (existing) {
+    await linkSession(scope, existing, input.eveSessionId, "initial");
     return existing;
   }
 
@@ -118,12 +119,14 @@ export async function ensureThreadForSession(
     .maybeSingle<{ id: string }>();
 
   if (data) {
+    await linkSession(scope, data.id, input.eveSessionId, "initial");
     return data.id;
   }
 
   // Someone else won the race on the unique index.
   const raced = await findThreadIdBySession(scope, input.eveSessionId);
   if (raced) {
+    await linkSession(scope, raced, input.eveSessionId, "initial");
     return raced;
   }
 
@@ -132,6 +135,40 @@ export async function ensureThreadForSession(
     ...errorFields(error),
   });
   throw new Error("Could not create thread");
+}
+
+/**
+ * Records that a thread owned this eve session.
+ *
+ * `threads.eve_session_id` is the current session; this is the history, so a
+ * conversation can outlive a session without losing its identity. Idempotent on
+ * the session id, so replaying a claim adds nothing.
+ */
+export async function linkSession(
+  scope: ThreadScope,
+  threadId: string,
+  eveSessionId: string,
+  reason: "initial" | "wake_recovery"
+): Promise<void> {
+  const { error } = await scope.client.from("thread_sessions").upsert(
+    {
+      workspace_id: scope.workspaceId,
+      thread_id: threadId,
+      eve_session_id: eveSessionId,
+      reason,
+    },
+    { onConflict: "eve_session_id", ignoreDuplicates: true }
+  );
+
+  if (error) {
+    // The thread is already usable without this row; losing it only costs the
+    // ability to resolve an old session later.
+    logger.error("db.link_session_failed", {
+      threadId,
+      eveSessionId,
+      ...errorFields(error),
+    });
+  }
 }
 
 export async function findThreadIdBySession(

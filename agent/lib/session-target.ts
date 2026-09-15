@@ -103,6 +103,21 @@ async function findThread(
       return data.id;
     }
 
+    // A thread outlives its eve session: when a wake had to create a new one,
+    // `threads.eve_session_id` names the current session and thread_sessions
+    // holds every session the conversation has ever had. Resolving through it
+    // is what keeps a recovered session projecting into the same thread
+    // instead of opening a second conversation.
+    const { data: linked } = await client
+      .from("thread_sessions")
+      .select("thread_id")
+      .eq("eve_session_id", sessionId)
+      .maybeSingle<{ thread_id: string }>();
+
+    if (linked) {
+      return linked.thread_id;
+    }
+
     await new Promise((resolve) => setTimeout(resolve, LOOKUP_DELAY_MS));
   }
 
