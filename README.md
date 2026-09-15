@@ -47,6 +47,10 @@ Copy the values into `.env.local` (never committed):
 | `MAYA_LEGACY_MODEL` | OpenAI model id for the phase 1 chat route |
 | `AI_GATEWAY_API_KEY` | Optional local fallback when Vercel OIDC is unavailable |
 | `NEXT_PUBLIC_MAYA_RUNTIME` | `ai-sdk` (default) or `eve` |
+| `RESEND_API_KEY` | Server-only. Email notification; absent means nothing is sent |
+| `NOTIFICATIONS_ENABLED` | `true` to allow sending in this environment. Default `false` |
+| `NOTIFICATIONS_FROM` | Sender address for notification email |
+| `NOTIFICATIONS_ALLOWLIST` | Comma-separated addresses. When set, only these can be emailed |
 
 Maya's own model is not an environment variable. eve owns it as a literal in
 `agent/agent.ts`; change it with `eve set --model <id>` or `/model <id>` in the

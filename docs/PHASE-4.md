@@ -768,3 +768,110 @@ untouched: no eve, no heartbeat, `ai-sdk` as before.
 No new UI surface — commitments live in conversation, `/routine-tasks` stays a
 placeholder. No notifications outside the app. No calendar writes, no Composio.
 No multi-assistant scheduling. No cross-workspace goals.
+
+---
+
+# Phase 4.1 — Email notification (Resend)
+
+Built on phase 4's claim, lease and recovery patterns. Nothing here changes the
+cron: it is still `0 6 * * *`, still a reconciler. A notification's normal path
+is its own detached workflow, started as soon as the outbox row is committed.
+
+## What it is
+
+```
+persist-turn hook                       run_background_task
+      │  message + outbox row               │  task + outbox row
+      │  in ONE statement (RPC)             │
+      ▼                                     ▼
+notification_outbox  ──start()──►  notificationSender (detached workflow)
+      ▲                                     │ claim → relevance → settings →
+      │                                     │ quiet hours → Resend → record
+   heartbeat (0 6 * * *)  ─────────────────►┘  only for jobs whose run never
+   reconciler, same claim                      started or died mid-send
+```
+
+## The pieces
+
+| Concern | Where |
+|---|---|
+| Outbox, settings, claim, atomic RPC | `…_notification_outbox.sql` |
+| Job store, lease, backoff | `agent/lib/notifications.ts` |
+| Quiet hours (DST-safe) | `agent/lib/quiet-hours.ts` |
+| Resend client and its guarantees | `agent/lib/email.ts` |
+| The one template | `agent/lib/email-template.ts` |
+| Send pipeline | `agent/lib/notification-sender.ts` |
+| Detached run | `agent/lib/notification-workflow.ts` |
+| Settings UI | `app/(app)/settings/notifications/` |
+
+## Idempotency, and what is actually promised
+
+Verified against Resend's documentation:
+
+- header `Idempotency-Key`, up to 256 characters;
+- keys expire after **24 hours**;
+- same key, same payload → the original response, no second email;
+- same key, *different* payload → `409 invalid_idempotent_request`.
+
+Our key is `humanframe-notification/<job id>` — stable for the life of the job,
+and the payload is derived from the job, so every retry is byte-identical.
+
+**The promise: at-most-once inside 24 hours, at-least-once beyond it.** The
+backoff schedule (1m, 5m, 15m, 1h, 3h) and the five-attempt cap keep every retry
+inside the provider's window on purpose. A job that somehow lived past 24 hours
+would lose provider-side deduplication, which is the one hole and the reason the
+cap exists. A timeout or a reset is recorded as **unknown**, never as "not
+sent": the job is deferred and the same key covers the retry.
+
+## Safety properties
+
+- **Email is opt-in.** No settings row means no email; the default is off.
+- **The address is never an argument.** `recipient_user_id` names a person, and
+  the address is read from the verified user record at send time. Nothing a
+  model writes can redirect an email.
+- **A browser cannot create or complete a job.** `notification_outbox` has a
+  `select`-only policy for `authenticated`; every write is service-role.
+  `claim_notifications` is revoked from `anon` and `authenticated`.
+- **Tenancy is a constraint, not a policy**, because the runtime bypasses RLS:
+  composite `(id, workspace_id)` foreign keys on assistant and thread.
+- **The email is a doorbell.** Short title, neutral line, no document content,
+  no tool input, no customer data, no quoted message. Approvals happen only
+  inside the app.
+- **Links use the configured `APP_URL` and Humanframe's own `threadId`** — never
+  a request header, never an eve session id.
+- **Relevance is re-checked after the claim**: a cancelled commitment, an
+  approval someone already answered, or a cancelled task is skipped, not sent.
+- **Quiet hours defer, never drop**, and are evaluated in the user's zone
+  through `Intl`, so the night the clocks change is correct.
+
+## Tests
+
+`pnpm test:notifications` — 52/52, no network, no model calls. Covers
+idempotent creation, concurrent claims, expired leases, a crash before sending,
+a timeout after a possible send, retry and permanent failure, quiet hours
+including a DST boundary, disabled notifications per-type and globally, a
+cancelled commitment, the escaped template, and tenant isolation on both the
+browser path and the service-role path.
+
+`pnpm test:live:notifications` — opt-in, sends one real email. Skips loudly
+unless `RESEND_API_KEY`, `NOTIFICATIONS_ENABLED=true`, and a
+`NOTIFICATIONS_TEST_RECIPIENT` that is on `NOTIFICATIONS_ALLOWLIST` are all set.
+
+## Limits, stated plainly
+
+- **If the immediate workflow fails to start, the job waits for the heartbeat —
+  up to roughly 24 hours.** `start()` is not transactional with the outbox
+  write, and the heartbeat runs daily on Hobby. The job is never lost, but it
+  can be very late. Pro and `*/5 * * * *` reduces that to minutes; that is the
+  single biggest argument for upgrading.
+- The detached-workflow start is still unproven at runtime (phase 4's P3). The
+  notification path inherits that risk exactly as the commitment timer does.
+- `background_done` is produced by `run_background_task`, which is new and
+  minimal: it does one model call on `MEMORY_MODEL` and records the result.
+- No push, no SMS, no notification dashboard. Recipients are individual users,
+  not workspaces.
+
+## Not enabled in production
+
+`NOTIFICATIONS_ENABLED` defaults to `false`, so production sends nothing until
+phase 4's P3 passes and it is turned on deliberately.

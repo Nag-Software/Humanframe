@@ -1,7 +1,23 @@
 import { defineHook } from "eve/hooks";
 
+import { notificationDedupeKey, type NotificationEvent } from "../lib/notifications";
+import { notificationSender } from "../lib/notification-workflow";
 import { resolveSessionTarget, type SessionTarget } from "../lib/session-target";
 import { isWakeMessage } from "../lib/wake";
+
+/**
+ * Why this turn is running, remembered from the input that started it.
+ *
+ * A wake marker arriving as user input means the assistant's eventual reply is
+ * a reminder; a task completion means it is finished background work. Nothing
+ * else produces a notification — and the marker itself never does, because a
+ * notification is only ever attached to the *visible* reply.
+ */
+const turnCause = new Map<string, { event: NotificationEvent; subjectType: "commitment" | "task"; subjectId: string | null }>();
+
+function causeKey(sessionId: string, turnId: string): string {
+  return `${sessionId}:${turnId}`;
+}
 
 /**
  * Projects an eve run into Supabase.
@@ -36,6 +52,14 @@ export default defineHook({
       const isWake =
         typeof first?.text === "string" && isWakeMessage(first.text);
 
+      if (isWake && typeof first?.text === "string") {
+        turnCause.set(causeKey(ctx.session.id, event.data.turnId), {
+          event: "reminder",
+          subjectType: "commitment",
+          subjectId: null,
+        });
+      }
+
       await writeMessage(target, {
         role: "user",
         channel: isWake ? "system" : "chat",
@@ -52,14 +76,38 @@ export default defineHook({
       const target = await resolve(ctx);
       if (!target) return;
 
-      await writeMessage(target, {
+      const cause = turnCause.get(causeKey(ctx.session.id, event.data.turnId));
+
+      // The message and its notification are written in one statement, so a
+      // replayed hook cannot produce one without the other — and cannot
+      // produce two of either.
+      const notificationId = await writeMessage(target, {
         role: "assistant",
         content: [{ type: "text", text: event.data.message }],
         sourceMessageId: eventId(event),
         createdAt: eventTime(event),
         sessionId: ctx.session.id,
         turnId: event.data.turnId,
+        notify: cause
+          ? {
+              userId: target.userId,
+              event: cause.event,
+              subjectType: cause.subjectType,
+              subjectId: cause.subjectId,
+              dedupeKey: notificationDedupeKey({
+                event: cause.event,
+                sessionId: ctx.session.id,
+                turnId: event.data.turnId,
+              }),
+            }
+          : undefined,
       });
+
+      turnCause.delete(causeKey(ctx.session.id, event.data.turnId));
+
+      if (notificationId) {
+        await startNotification(notificationId);
+      }
     },
 
     async "turn.started"(event, ctx) {
@@ -145,6 +193,29 @@ export default defineHook({
           status: "awaiting_approval",
           risk: "execute_with_approval",
         });
+
+        // An approval has no assistant message to hang a notification on: the
+        // turn is parked waiting for a person. The notification is keyed on the
+        // call, so a re-emitted request produces one job, not one per event.
+        const { data: call } = await target.client
+          .from("tool_calls")
+          .select("id")
+          .eq("eve_session_id", ctx.session.id)
+          .eq("call_id", request.action.callId)
+          .maybeSingle<{ id: string }>();
+
+        if (call) {
+          const jobId = await enqueueNotification(target, {
+            userId: target.userId,
+            event: "approval_needed",
+            subjectType: "approval",
+            subjectId: call.id,
+            dedupeKey: `approval_needed:${ctx.session.id}:${request.action.callId}`,
+          });
+          if (jobId) {
+            await startNotification(jobId);
+          }
+        }
       }
     },
 
@@ -192,6 +263,19 @@ function report(operation: string, error: unknown): void {
   }
 }
 
+type NotifyRequest = {
+  userId: string;
+  event: NotificationEvent;
+  subjectType: "commitment" | "task" | "approval";
+  subjectId: string | null;
+  dedupeKey: string;
+};
+
+/**
+ * Writes one message and, when the turn warrants it, the notification job for
+ * it — in a single statement, so the pair is atomic. Returns the notification
+ * id when this call is the one that created it.
+ */
 async function writeMessage(
   target: SessionTarget,
   message: {
@@ -202,27 +286,81 @@ async function writeMessage(
     createdAt: string;
     sessionId: string;
     turnId: string;
+    notify?: NotifyRequest;
   }
-): Promise<void> {
-  const { error } = await target.client.from("messages").upsert(
-    {
-      workspace_id: target.workspaceId,
-      assistant_id: target.assistantId,
-      thread_id: target.threadId,
-      channel: message.channel ?? "chat",
-      role: message.role,
-      content: message.content,
-      source_message_id: message.sourceMessageId ?? null,
-      created_at: message.createdAt,
-      eve_session_id: message.sessionId,
-      eve_turn_id: message.turnId,
-    },
-    {
-      onConflict: "thread_id,source_message_id,created_at",
-      ignoreDuplicates: true,
-    }
-  );
+): Promise<string | null> {
+  const { data, error } = await target.client.rpc("record_assistant_message", {
+    p_workspace_id: target.workspaceId,
+    p_assistant_id: target.assistantId,
+    p_thread_id: target.threadId,
+    p_role: message.role,
+    p_channel: message.channel ?? "chat",
+    p_content: message.content,
+    p_source_message_id: message.sourceMessageId ?? null,
+    p_created_at: message.createdAt,
+    p_eve_session_id: message.sessionId,
+    p_eve_turn_id: message.turnId,
+    p_notify_user_id: message.notify?.userId ?? null,
+    p_event_type: message.notify?.event ?? null,
+    p_dedupe_key: message.notify?.dedupeKey ?? null,
+    p_subject_type: message.notify?.subjectType ?? null,
+    p_subject_id: message.notify?.subjectId ?? null,
+  });
+
   report("message", error);
+  const row = (data as { notification_id: string | null }[] | null)?.[0];
+  return row?.notification_id ?? null;
+}
+
+/** An outbox job with no message of its own — an approval request. */
+async function enqueueNotification(
+  target: SessionTarget,
+  notify: NotifyRequest
+): Promise<string | null> {
+  const { data, error } = await target.client
+    .from("notification_outbox")
+    .upsert(
+      {
+        workspace_id: target.workspaceId,
+        assistant_id: target.assistantId,
+        recipient_user_id: notify.userId,
+        thread_id: target.threadId,
+        event_type: notify.event,
+        subject_type: notify.subjectType,
+        subject_id: notify.subjectId,
+        dedupe_key: notify.dedupeKey,
+      },
+      { onConflict: "workspace_id,dedupe_key", ignoreDuplicates: true }
+    )
+    .select("id")
+    .maybeSingle<{ id: string }>();
+
+  report("notification", error);
+  return data?.id ?? null;
+}
+
+/**
+ * Starts the job's own durable run, after its row is committed.
+ *
+ * A failure here is logged and swallowed: the job is already durable, and the
+ * daily heartbeat will pick it up. That recovery costs up to about a day, which
+ * is why the immediate start exists at all.
+ */
+async function startNotification(jobId: string): Promise<void> {
+  try {
+    const { start } = await import("workflow/api");
+    await start(notificationSender, [{ jobId }]);
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "notification.start_failed",
+        jobId,
+        error: error instanceof Error ? error.message : String(error),
+        note: "the daily heartbeat will send this, up to ~24h later",
+      })
+    );
+  }
 }
 
 async function upsertRun(

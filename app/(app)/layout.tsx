@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getDictionary, getLocale } from "@/lib/i18n";
 import { requireRequestScope } from "@/server/db/request-scope";
+import { Analytics } from "@vercel/analytics/next"
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const scope = await requireRequestScope();
@@ -16,6 +17,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
 
   return (
     <I18nProvider dictionary={dictionary}>
+      <Analytics />
       <SidebarProvider>
         <AppSidebar
           user={{

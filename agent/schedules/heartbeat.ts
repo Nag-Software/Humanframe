@@ -1,5 +1,6 @@
 import { defineSchedule } from "eve/schedules";
 
+import { sweepNotifications } from "../lib/notification-sender";
 import { sweepWakes } from "../lib/wake";
 
 /**
@@ -9,6 +10,10 @@ import { sweepWakes } from "../lib/wake";
  * finds nothing. It exists for the cases a timer cannot cover: a run lost to a
  * workflow-storage expiry, a `start()` that failed after the commitment row was
  * written, or a delivery abandoned mid-flight when a worker died.
+ *
+ * It sweeps two queues: commitments whose timer never fired, and notification
+ * jobs whose own run never started or died mid-send. Both use the same claim
+ * discipline, so a sweep overlapping a live run cannot double-deliver.
  *
  * Its cadence therefore bounds *recovery* latency, not wake latency. It claims
  * through exactly the same atomic function the timers use, so a sweep that
@@ -31,14 +36,15 @@ export default defineSchedule({
   run({ waitUntil }) {
     waitUntil(
       (async () => {
-        const outcomes = await sweepWakes({ limit: 25 });
-        if (outcomes.length > 0) {
+        const wakes = await sweepWakes({ limit: 25 });
+        const notifications = await sweepNotifications({ limit: 25 });
+        if (wakes.length > 0 || notifications.length > 0) {
           console.log(
             JSON.stringify({
               level: "info",
               event: "heartbeat.recovered",
-              count: outcomes.length,
-              outcomes,
+              wakes,
+              notifications,
             })
           );
         }

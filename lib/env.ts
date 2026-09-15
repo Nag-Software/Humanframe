@@ -35,6 +35,14 @@ const serverSchema = z.object({
   MEMORY_MODEL_PROVIDER: z.enum(["gateway", "openai"]).default("gateway"),
   EMBEDDING_MODEL: z.string().default("openai/text-embedding-3-small"),
   EMBEDDING_PROVIDER: z.enum(["gateway", "openai"]).default("gateway"),
+  // Email notification. Server-only, and off unless an environment turns it on
+  // explicitly: a preview deployment must not inherit production's ability to
+  // email real people.
+  RESEND_API_KEY: z.string().min(1).optional(),
+  NOTIFICATIONS_ENABLED: z.enum(["true", "false"]).default("false"),
+  NOTIFICATIONS_FROM: z.string().default("Maya <maya@humanframe.app>"),
+  // Comma-separated. When set, no other address can be written to.
+  NOTIFICATIONS_ALLOWLIST: z.string().optional(),
 });
 
 export const publicEnv = publicSchema.parse({

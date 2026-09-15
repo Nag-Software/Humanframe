@@ -13,7 +13,9 @@
     "test:memory": "tsx tests/memory.test.mts",
     "test:commitments": "tsx tests/commitments.test.mts",
     "test:internal-auth": "tsx tests/internal-auth.test.mts",
-    "test:live:memory": "tsx tests/memory-live.test.mts"
+    "test:notifications": "tsx tests/notifications.test.mts",
+    "test:live:memory": "tsx tests/memory-live.test.mts",
+    "test:live:notifications": "tsx tests/notifications-live.test.mts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.66",
@@ -27,6 +29,7 @@
     "@shadcn/react": "^0.3.1",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.116.0",
+    "@vercel/analytics": "^2.0.1",
     "ai": "^7.0.99",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.3.0",

@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 
 const TABS = [
   { href: "/settings/general", label: "Generelt" },
+  { href: "/settings/notifications", label: "Varsler" },
   { href: "/settings/team", label: "Team" },
   { href: "/settings/billing", label: "Fakturering" },
   { href: "/settings/limits", label: "Grenser" },
