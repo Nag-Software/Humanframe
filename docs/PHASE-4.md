@@ -467,17 +467,28 @@ once timers are trusted.
 
 ## 6. Internal auth — correction 4
 
-`vercelOidc()` is the existing gate; the deliverer's calls go through a
-dedicated `internalDeployment()` `AuthFn` placed ahead of it, which verifies:
+The cryptography is eve's `verifyVercelOidc` — signature against the issuer's
+JWKS, `iss`, `aud`, `exp`/`nbf`, and a binding to one project. The deliverer's
+calls go through an `internalDeployment()` `AuthFn` placed ahead of
+`vercelOidc()` in the walk, which adds what eve deliberately leaves open:
 
-| Claim | Check |
+| Check | Owner |
 |---|---|
-| signature | against the issuer's JWKS, cached with a TTL |
-| `iss` | exactly our team's OIDC issuer |
-| `aud` | exactly our project's audience |
-| `project_id` | equals this deployment's project |
-| `environment` | equals this deployment's environment (a preview token cannot drive production, or the reverse) |
-| `exp`/`nbf` | enforced, no clock slack beyond 60s |
+| signature, `iss`, `aud`, `exp`/`nbf` | eve `verifyVercelOidc` |
+| `project_id` equals this deployment's project | eve, re-asserted by us |
+| **`environment` equals this deployment's environment** | **us** |
+| **principal is a machine, not a person** | **us** |
+| project binding present at all (else fail closed) | us |
+
+The environment check is ours because eve's verifier accepts a same-project
+token from *another* environment as a `service` principal — a documented and
+reasonable default for cross-environment callers, and too wide for delivery: it
+would let a preview deployment wake production users. Tested, and it was a real
+gap, not a theoretical one (`tests/internal-auth.test.mts`).
+
+The machine check matters for the same reason in the other direction: a local
+`eve link` token carries a `user_id` and authenticates as a person. A person's
+token is not this deployment calling itself.
 
 The principal it returns carries **no scope**:
 `{authenticator:"internal", principalType:"service", principalId:"humanframe:deliverer"}`.
@@ -494,9 +505,12 @@ captured before a `sleep`, and never written to a step result — step inputs an
 results are persisted in durable workflow history, and a token that sat through
 a 26-hour sleep is expired anyway.
 
-Tests (§11): wrong project rejected, wrong environment rejected, expired token
-rejected, and a delivery whose target session belongs to another workspace
-refused.
+Tests (`pnpm test:internal-auth`, 15/15): wrong project rejected, wrong
+environment rejected in both directions, edited claims rejected, stripped
+signature rejected, a person's token rejected, and an unbound runtime refusing
+every internal caller. Acceptance of a *machine* principal cannot be asserted
+locally — `eve link` only mints development user tokens — so that one assertion
+is skipped locally and is part of P3 on Preview.
 
 ## 7. Cancellation — correction 6
 
