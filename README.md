@@ -44,8 +44,7 @@ Copy the values into `.env.local` (never committed):
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only; used by background work, never by a request handler that has a user session |
 | `APP_URL` | Origin used for auth callbacks |
 | `OPENAI_API_KEY` | The phase 1 chat route and, later, GPT-Live |
-| `MAYA_MODEL` | Gateway model id for Maya (the eve agent); default `openai/gpt-5-nano` |
-| `MAYA_LEGACY_MODEL` | OpenAI model id for the phase 1 chat route |
+| `MAYA_MODEL` | OpenAI model id for the phase 1 chat route. Maya's own model is eve's, in `agent/agent.ts` |
 | `AI_GATEWAY_API_KEY` | Optional local fallback when Vercel OIDC is unavailable |
 | `NEXT_PUBLIC_MAYA_RUNTIME` | `ai-sdk` (default) or `eve` |
 

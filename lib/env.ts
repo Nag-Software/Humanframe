@@ -19,12 +19,9 @@ const publicSchema = z.object({
 const serverSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   APP_URL: z.url().default("http://localhost:3000"),
-  // Maya runs on the eve agent; the id is an AI Gateway id. agent/agent.ts
-  // reads the same variable when eve builds its manifest.
-  MAYA_MODEL: z.string().default("openai/gpt-5-nano"),
-  // The phase 1 AI SDK route talks to OpenAI directly, so it takes a bare
-  // OpenAI model id and keeps its own variable.
-  MAYA_LEGACY_MODEL: z.string().default("gpt-5.2"),
+  // The phase 1 AI SDK route's model. Maya's own model belongs to eve and
+  // lives in agent/agent.ts, not here.
+  MAYA_MODEL: z.string().default("gpt-5.2"),
   // Model access: AI Gateway via Vercel OIDC in preview/production, with an
   // optional local key fallback. OPENAI_API_KEY stays for the OpenAI-specific
   // paths (Responses API today, GPT-Live later).

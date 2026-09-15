@@ -17,7 +17,7 @@ export function mayaModel(): LanguageModel {
     );
   }
 
-  return openai.responses(env.MAYA_LEGACY_MODEL);
+  return openai.responses(env.MAYA_MODEL);
 }
 
 /**
