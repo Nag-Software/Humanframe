@@ -25,6 +25,10 @@ const serverSchema = z.object({
   // paths (Responses API today, GPT-Live later).
   AI_GATEWAY_API_KEY: z.string().min(1).optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
+  // The memory pipeline runs on its own models: extraction can be cheaper than
+  // Maya, and embeddings are a different model entirely.
+  MEMORY_MODEL: z.string().default("openai/gpt-5-mini"),
+  EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
 });
 
 export const publicEnv = publicSchema.parse({

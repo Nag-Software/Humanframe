@@ -1,0 +1,282 @@
+import { generateObject } from "ai";
+import { z } from "zod";
+
+import { embedText, type MemoryScope } from "./memory-store";
+import { memoryModel } from "./models";
+
+/**
+ * Turns a finished exchange into durable memory.
+ *
+ * The model proposes candidates; this module decides what to store. Writes are
+ * keyed on a dedupe key derived from the statement itself, so the same fact
+ * learned twice updates one row, and a retried hook writes nothing new.
+ */
+const candidateSchema = z.object({
+  memories: z
+    .array(
+      z.object({
+        kind: z.enum(["fact", "preference", "profile", "decision", "episode"]),
+        // Nullable rather than optional: structured outputs require every
+        // property to be present, so "no subject" has to be an explicit null.
+        subject: z
+          .string()
+          .max(120)
+          .nullable()
+          .describe("Person, company or project this is about, or null"),
+        attribute: z
+          .string()
+          .max(120)
+          .describe("Short key, e.g. 'response length' or 'employer'"),
+        value: z.string().max(400).describe("The statement itself"),
+        confidence: z.number().min(0).max(1),
+        importance: z.number().min(0).max(1),
+      })
+    )
+    .max(8),
+});
+
+export type Candidate = z.infer<typeof candidateSchema>["memories"][number];
+
+const EXTRACTION_PROMPT = `You maintain an assistant's long-term memory of one user.
+
+Extract only durable knowledge that would still matter in a week: stated
+preferences, profile details, relationships, commitments the user described,
+explicit decisions, and events worth remembering.
+
+Ignore greetings, small talk, thanks, the assistant's own suggestions, anything
+the user asked hypothetically, and anything already obvious from the assistant's
+role. If nothing durable was said, return an empty list.
+
+Confidence reflects how explicitly the user stated it: 0.9 for "I prefer X",
+0.5 for something implied. Importance reflects how much it should shape future
+answers.`;
+
+export async function extractCandidates(input: {
+  userText: string;
+  assistantText: string;
+}): Promise<Candidate[]> {
+  const { object } = await generateObject({
+    model: memoryModel(),
+    schema: candidateSchema,
+    system: EXTRACTION_PROMPT,
+    prompt: `User said:\n${input.userText}\n\nAssistant replied:\n${input.assistantText}`,
+  });
+
+  return object.memories;
+}
+
+/** Stable across retries and re-extractions of the same statement. */
+export function dedupeKey(candidate: Candidate): string {
+  const subject = (candidate.subject ?? "self").trim().toLowerCase() || "self";
+  const attribute = candidate.attribute.trim().toLowerCase();
+  return `${candidate.kind}:${subject}:${attribute}`;
+}
+
+export type StoreResult = {
+  stored: number;
+  superseded: number;
+  skipped: number;
+};
+
+export async function storeCandidates(
+  scope: MemoryScope,
+  candidates: Candidate[],
+  source: { threadId: string | null; messageId: string | null; occurredAt: string }
+): Promise<StoreResult> {
+  const result: StoreResult = { stored: 0, superseded: 0, skipped: 0 };
+
+  for (const candidate of candidates) {
+    if (candidate.confidence < 0.4) {
+      result.skipped += 1;
+      continue;
+    }
+
+    if (
+      candidate.kind === "fact" ||
+      candidate.kind === "preference" ||
+      candidate.kind === "profile"
+    ) {
+      const superseded = await upsertFact(scope, candidate, source);
+      result.stored += 1;
+      result.superseded += superseded ? 1 : 0;
+      continue;
+    }
+
+    if (candidate.kind === "decision") {
+      await insertDecision(scope, candidate, source);
+      result.stored += 1;
+      continue;
+    }
+
+    await upsertMemory(scope, candidate, source);
+    result.stored += 1;
+  }
+
+  return result;
+}
+
+/**
+ * A newer value does not sit beside the old one: the previous active fact is
+ * marked superseded and points at its replacement, so a contradiction is
+ * recorded rather than silently resolved.
+ */
+async function upsertFact(
+  scope: MemoryScope,
+  candidate: Candidate,
+  source: { threadId: string | null; messageId: string | null }
+): Promise<boolean> {
+  const kind = candidate.kind as "fact" | "preference" | "profile";
+  const attribute = candidate.attribute.trim();
+
+  const { data: existing } = await scope.client
+    .from("facts")
+    .select("id, value")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("assistant_id", scope.assistantId)
+    .eq("kind", kind)
+    .eq("status", "active")
+    .ilike("attribute", attribute)
+    .is("subject_entity_id", null)
+    .maybeSingle<{ id: string; value: string }>();
+
+  if (existing && existing.value.trim() === candidate.value.trim()) {
+    // Same statement again: refresh confidence, create nothing.
+    await scope.client
+      .from("facts")
+      .update({
+        confidence: candidate.confidence,
+        importance: candidate.importance,
+      })
+      .eq("id", existing.id);
+    return false;
+  }
+
+  if (existing) {
+    await scope.client
+      .from("facts")
+      .update({ status: "superseded", valid_to: new Date().toISOString() })
+      .eq("id", existing.id);
+  }
+
+  const { data: inserted, error: insertError } = await scope.client
+    .from("facts")
+    .insert({
+      workspace_id: scope.workspaceId,
+      assistant_id: scope.assistantId,
+      kind,
+      attribute,
+      value: candidate.value.trim(),
+      confidence: candidate.confidence,
+      importance: candidate.importance,
+      source_thread_id: source.threadId,
+      source_message_id: source.messageId,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+
+  if (insertError) {
+    throw new Error(`fact write failed: ${insertError.message}`);
+  }
+
+  if (existing && inserted) {
+    await scope.client
+      .from("facts")
+      .update({ superseded_by: inserted.id })
+      .eq("id", existing.id);
+    return true;
+  }
+
+  return false;
+}
+
+async function insertDecision(
+  scope: MemoryScope,
+  candidate: Candidate,
+  source: { threadId: string | null; messageId: string | null }
+): Promise<void> {
+  await scope.client.from("decisions").insert({
+    workspace_id: scope.workspaceId,
+    assistant_id: scope.assistantId,
+    statement: candidate.value.trim(),
+    rationale: candidate.subject ?? null,
+    importance: candidate.importance,
+    confidence: candidate.confidence,
+    source_thread_id: source.threadId,
+    source_message_id: source.messageId,
+  });
+}
+
+async function upsertMemory(
+  scope: MemoryScope,
+  candidate: Candidate,
+  source: { threadId: string | null; messageId: string | null; occurredAt: string }
+): Promise<void> {
+  const content = candidate.subject
+    ? `${candidate.subject} — ${candidate.attribute}: ${candidate.value}`
+    : `${candidate.attribute}: ${candidate.value}`;
+
+  const embedding = await embedText(content);
+
+  await scope.client.from("memories").upsert(
+    {
+      workspace_id: scope.workspaceId,
+      assistant_id: scope.assistantId,
+      user_id: scope.userId,
+      kind: "episodic",
+      content,
+      embedding: JSON.stringify(embedding),
+      importance: candidate.importance,
+      confidence: candidate.confidence,
+      dedupe_key: dedupeKey(candidate),
+      source_thread_id: source.threadId,
+      source_message_id: source.messageId,
+      occurred_at: source.occurredAt,
+    },
+    { onConflict: "workspace_id,assistant_id,dedupe_key" }
+  );
+}
+
+/**
+ * Facts are the load-bearing memory, so they are also embedded and mirrored
+ * into `memories`. That keeps one retrieval path — semantic search — instead
+ * of two, while `facts` stays the structured source of truth.
+ */
+export async function mirrorFactsIntoMemories(
+  scope: MemoryScope,
+  candidates: Candidate[],
+  source: { threadId: string | null; messageId: string | null; occurredAt: string }
+): Promise<void> {
+  for (const candidate of candidates) {
+    if (
+      candidate.kind !== "fact" &&
+      candidate.kind !== "preference" &&
+      candidate.kind !== "profile"
+    ) {
+      continue;
+    }
+    if (candidate.confidence < 0.4) {
+      continue;
+    }
+
+    const content = `${candidate.attribute}: ${candidate.value}`;
+    const embedding = await embedText(content);
+
+    await scope.client.from("memories").upsert(
+      {
+        workspace_id: scope.workspaceId,
+        assistant_id: scope.assistantId,
+        user_id: scope.userId,
+        kind: "semantic",
+        content,
+        embedding: JSON.stringify(embedding),
+        importance: candidate.importance,
+        confidence: candidate.confidence,
+        dedupe_key: dedupeKey(candidate),
+        source_thread_id: source.threadId,
+        source_message_id: source.messageId,
+        occurred_at: source.occurredAt,
+      },
+      { onConflict: "workspace_id,assistant_id,dedupe_key" }
+    );
+  }
+}
