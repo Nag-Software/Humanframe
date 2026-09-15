@@ -2,13 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { TurnAssembler, type TranscriptDelta } from "@/lib/call/turn-assembler";
+
 /**
  * One voice call, from the browser's side.
  *
  * The browser's whole job is transport: it owns the microphone, the peer
  * connection and the data channel, and it relays two kinds of event to the
- * server — a finished turn, and a tool call. It holds no credential, decides
- * nothing about scope, and never touches a database.
+ * server — a finished turn, and a request for backend work. It holds no
+ * credential, decides nothing about scope, and never touches a database.
+ *
+ * It does own one piece of bookkeeping the provider no longer does: Live sends
+ * transcripts as deltas and never says a turn has ended, so the assembler
+ * draws that boundary here, where the timestamps arrive.
  *
  * Everything it opens, it closes. Microphone tracks, the audio element, the
  * data channel and the peer connection are all torn down on hang-up, on
@@ -50,6 +56,9 @@ type StartResponse = {
   maxMinutes: number;
 };
 
+/** How long after the last audio fragment Maya counts as still speaking. */
+const SPEAKING_IDLE_MS = 800;
+
 export function useCall(options: { threadId: string | null }): UseCall {
   const [status, setStatus] = useState<CallStatus>("idle");
   const [error, setError] = useState<CallError | null>(null);
@@ -65,6 +74,14 @@ export function useCall(options: { threadId: string | null }): UseCall {
   const callId = useRef<string | null>(null);
   /** Turns already relayed, so a repeated provider event is not sent twice. */
   const relayed = useRef<Set<string>>(new Set());
+  /** Live has no transcript-completed event; this decides where turns end. */
+  const assembler = useRef<TurnAssembler>(new TurnAssembler());
+  /**
+   * Live has no `response.done` either — the guide's instruction is to track
+   * playback in the client — so "she is speaking" is audio deltas plus a short
+   * idle timeout, reset on every fragment.
+   */
+  const speakingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
    * Which attempt owns the call right now.
    *
@@ -81,8 +98,46 @@ export function useCall(options: { threadId: string | null }): UseCall {
    */
   const generation = useRef(0);
 
+  /**
+   * Sends one finished turn to be persisted.
+   *
+   * Idempotent twice over: the assembler gives a turn a stable id, and this
+   * refuses to send one it has already sent, so a reconnect or a repeated
+   * fragment cannot produce two messages.
+   */
+  const relayTurn = useCallback(
+    async (turn: { sourceId: string; role: "user" | "assistant"; text: string }) => {
+      const id = callId.current;
+      if (!id || relayed.current.has(turn.sourceId)) {
+        return;
+      }
+      relayed.current.add(turn.sourceId);
+
+      await fetch("/api/assistants/maya/call/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ callSessionId: id, ...turn }),
+        keepalive: true,
+      }).catch(() => undefined);
+    },
+    []
+  );
+
   /** Releases every resource. Safe to call repeatedly. */
   const teardown = useCallback(() => {
+    // Whatever was still being said is a real turn: close it and send it
+    // before the transport goes away, or the last thing said is lost.
+    const pending = assembler.current.flush();
+    if (pending) {
+      void relayTurn(pending);
+    }
+    assembler.current = new TurnAssembler();
+
+    if (speakingTimer.current) {
+      clearTimeout(speakingTimer.current);
+      speakingTimer.current = null;
+    }
+
     channel.current?.close();
     channel.current = null;
 
@@ -103,7 +158,7 @@ export function useCall(options: { threadId: string | null }): UseCall {
     relayed.current.clear();
     setSpeaking(false);
     setMuted(false);
-  }, []);
+  }, [relayTurn]);
 
   const report = useCallback(
     async (reason: "hangup" | "navigation" | "error" | "microphone_denied") => {
@@ -135,72 +190,85 @@ export function useCall(options: { threadId: string | null }): UseCall {
   /**
    * Relays what the provider says.
    *
-   * Two event types matter and the rest are ignored on purpose: a partial
-   * transcript is never persisted and never acted on, so nothing half-said can
-   * become a message or a commitment.
+   * Three kinds of event matter. Audio fragments drive the speaking
+   * indicator, transcript fragments are fed to the assembler and produce a
+   * turn only once it is complete, and a delegation is a request for backend
+   * work that the server answers with eve.
+   *
+   * Everything else is ignored on purpose, and no half-finished transcript is
+   * ever persisted — that guarantee now comes from the assembler rather than
+   * from the provider declaring a turn done, because Live never does.
    */
-  const handleEvent = useCallback(async (raw: string) => {
-    let event: ProviderEvent;
-    try {
-      event = JSON.parse(raw) as ProviderEvent;
-    } catch {
-      return;
-    }
+  const handleEvent = useCallback(
+    async (raw: string) => {
+      let event: LiveEvent;
+      try {
+        event = JSON.parse(raw) as LiveEvent;
+      } catch {
+        return;
+      }
 
-    if (event.type === "response.output_audio.delta") {
-      setSpeaking(true);
-      return;
-    }
-    if (event.type === "response.done" || event.type === "response.cancelled") {
-      setSpeaking(false);
-    }
+      if (event.type === "session.output_audio.delta") {
+        setSpeaking(true);
+        if (speakingTimer.current) {
+          clearTimeout(speakingTimer.current);
+        }
+        speakingTimer.current = setTimeout(
+          () => setSpeaking(false),
+          SPEAKING_IDLE_MS
+        );
+        return;
+      }
 
-    const id = callId.current;
-    if (!id) return;
+      const id = callId.current;
+      if (!id) return;
 
-    const turn = turnOf(event);
-    if (turn) {
-      // Belt and braces: the server is idempotent, and this stops the same
-      // event being relayed twice in the first place.
-      if (relayed.current.has(turn.sourceId)) return;
-      relayed.current.add(turn.sourceId);
+      const delta = deltaOf(event);
+      if (delta) {
+        const finished = assembler.current.push(delta);
+        if (finished) {
+          await relayTurn(finished);
+        }
+        return;
+      }
 
-      await fetch("/api/assistants/maya/call/turn", {
+      const delegationId = delegationOf(event);
+      if (!delegationId) {
+        return;
+      }
+
+      // The delegation carries no task text, so the conversation goes with it.
+      // The turn still being spoken is included: that is usually where the
+      // request actually is.
+      const answer = await fetch("/api/assistants/maya/call/delegate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ callSessionId: id, ...turn }),
-        keepalive: true,
-      }).catch(() => undefined);
-      return;
-    }
-
-    const call = toolCallOf(event);
-    if (call) {
-      const result = await fetch("/api/assistants/maya/call/tool", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ callSessionId: id, ...call }),
+        body: JSON.stringify({
+          callSessionId: id,
+          delegationId,
+          transcript: assembler.current
+            .context()
+            .map((turn) => ({ role: turn.role, text: turn.text })),
+        }),
       })
         .then((response) => (response.ok ? response.json() : null))
         .catch(() => null);
 
-      const output = (result as { output?: unknown } | null)?.output ?? {
-        error: "That did not work.",
-      };
+      const content =
+        (answer as { content?: unknown } | null)?.content ??
+        "I could not get that just now.";
 
       channel.current?.send(
         JSON.stringify({
-          type: "conversation.item.create",
-          item: {
-            type: "function_call_output",
-            call_id: call.callId,
-            output: JSON.stringify(output),
-          },
+          type: "session.commentary.append",
+          event_id: `delegation_${delegationId}`,
+          delegation_id: delegationId,
+          content: String(content),
         })
       );
-      channel.current?.send(JSON.stringify({ type: "response.create" }));
-    }
-  }, []);
+    },
+    [relayTurn]
+  );
 
   const start = useCallback(async () => {
     // Synchronous, before the first await: two entries can never both proceed.
@@ -392,84 +460,44 @@ export function useCall(options: { threadId: string | null }): UseCall {
   };
 }
 
-type ProviderEvent = {
+type LiveEvent = {
   type?: string;
-  item_id?: string;
-  transcript?: string;
-  name?: string;
-  call_id?: string;
-  arguments?: string;
-  item?: { id?: string; role?: string; status?: string; content?: unknown[] };
-};
-
-type RelayedTurn = {
-  sourceId: string;
-  role: "user" | "assistant";
-  text: string;
-  interrupted?: boolean;
+  delta?: string;
+  start_ms?: number;
+  end_ms?: number;
+  delegation?: { id?: string; target?: string };
 };
 
 /**
  * The browser's half of the OpenAI adapter, kept deliberately thin and kept
  * here rather than in shared code: the server's normaliser is the one that
- * matters, and this exists only so partial events are dropped before they cost
- * a request.
+ * matters, and this exists only so events that mean nothing are dropped before
+ * they cost a request.
  */
-function turnOf(event: ProviderEvent): RelayedTurn | null {
-  if (
-    event.type === "conversation.item.input_audio_transcription.completed" &&
-    event.item_id &&
-    typeof event.transcript === "string"
-  ) {
-    const text = event.transcript.trim();
-    return text ? { sourceId: event.item_id, role: "user", text } : null;
-  }
+function deltaOf(event: LiveEvent): TranscriptDelta | null {
+  const role =
+    event.type === "session.input_transcript.delta"
+      ? ("user" as const)
+      : event.type === "session.output_transcript.delta"
+        ? ("assistant" as const)
+        : null;
 
-  if (
-    event.type === "conversation.item.done" &&
-    event.item?.id &&
-    event.item.role === "assistant"
-  ) {
-    const text = (event.item.content ?? [])
-      .map((part) => {
-        const record = part as { transcript?: unknown; text?: unknown };
-        if (typeof record.transcript === "string") return record.transcript;
-        if (typeof record.text === "string") return record.text;
-        return "";
-      })
-      .join(" ")
-      .trim();
-
-    if (!text) return null;
-
-    return {
-      sourceId: event.item.id,
-      role: "assistant",
-      text,
-      interrupted: event.item.status === "incomplete",
-    };
-  }
-
-  return null;
-}
-
-function toolCallOf(
-  event: ProviderEvent
-): { name: string; callId: string; args: unknown } | null {
-  if (
-    event.type !== "response.function_call_arguments.done" ||
-    !event.name ||
-    !event.call_id
-  ) {
+  if (!role || typeof event.delta !== "string" || event.delta.length === 0) {
     return null;
   }
 
-  let args: unknown = {};
-  try {
-    args = event.arguments ? JSON.parse(event.arguments) : {};
-  } catch {
-    args = {};
-  }
+  const startMs = typeof event.start_ms === "number" ? event.start_ms : 0;
+  const endMs = typeof event.end_ms === "number" ? event.end_ms : startMs;
 
-  return { name: event.name, callId: event.call_id, args };
+  return { role, text: event.delta, startMs, endMs };
+}
+
+function delegationOf(event: LiveEvent): string | null {
+  if (event.type !== "session.delegation.created") {
+    return null;
+  }
+  const delegation = event.delegation;
+  return delegation?.id && delegation.target === "client"
+    ? delegation.id
+    : null;
 }

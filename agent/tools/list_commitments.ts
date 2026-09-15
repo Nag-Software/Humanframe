@@ -35,4 +35,16 @@ export default defineTool({
     const { data } = await query;
     return { commitments: data ?? [] };
   },
+  /** An empty list is good news, and the user still has to be told. */
+  toModelOutput(output) {
+    if (output.commitments.length === 0) {
+      return {
+        type: "text",
+        value:
+          "There are no open commitments. Tell the user that in one sentence; " +
+          "do not end the turn without it.",
+      };
+    }
+    return { type: "json", value: output };
+  },
 });

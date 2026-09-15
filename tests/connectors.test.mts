@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 // First: its module scope loads .env.local, and the connector modules below
 // parse the environment as they are evaluated.
@@ -80,12 +81,42 @@ async function grant(
 const setEnabled = (keys: string[], enabled: boolean) =>
   admin.from("connector_actions").update({ enabled }).in("action_key", keys);
 
+/**
+ * The register is global configuration, not per-tenant data.
+ *
+ * Flipping `enabled` to run a test therefore changes the real deployment, and
+ * forcing it back to `false` afterwards silently switched off whatever the
+ * operator had turned on. The original values are snapshotted and restored
+ * exactly, so a test run leaves the register as it found it.
+ */
+type RegisterState = { action_key: string; provider: string; enabled: boolean };
+let registerSnapshot: RegisterState[] = [];
+
+async function snapshotRegister(): Promise<void> {
+  const { data } = await admin
+    .from("connector_actions")
+    .select("action_key, provider, enabled")
+    .returns<RegisterState[]>();
+  registerSnapshot = data ?? [];
+}
+
+async function restoreRegister(): Promise<void> {
+  for (const row of registerSnapshot) {
+    await admin
+      .from("connector_actions")
+      .update({ enabled: row.enabled })
+      .eq("action_key", row.action_key)
+      .eq("provider", row.provider);
+  }
+}
+
 async function main(): Promise<void> {
   const alice = await createTestWorkspace("conn-alice");
   const mallory = await createTestWorkspace("conn-mallory");
   workspaces.push(alice, mallory);
 
-  // The register ships disabled. Turning actions on is the "no deploy" claim.
+  // Remember how the operator left it, then turn everything on for the run.
+  await snapshotRegister();
   await setEnabled(["email.search", "email.read", "email.send"], true);
 
   const account = await makeAccount(alice);
@@ -519,6 +550,235 @@ async function main(): Promise<void> {
     "46 key order does not change the hash, so a jsonb round trip survives",
     hashPayload({ b: 1, a: { d: 2, c: 3 } }) === hashPayload({ a: { c: 3, d: 2 }, b: 1 })
   );
+
+  // -----------------------------------------------------------------------
+  // The OAuth callback's shape
+  //
+  // `redirect()` in Next works by throwing. A redirect inside a `try` is
+  // therefore caught by that block's own `catch` — which silently converted
+  // every outcome, success included, into a generic failure and left accounts
+  // authorised at the broker but unbound here. The structure is the fix, so
+  // the structure is what is asserted.
+  // -----------------------------------------------------------------------
+
+  const callbackSource = readFileSync(
+    new URL("../app/api/connectors/callback/route.ts", import.meta.url),
+    "utf8"
+  );
+
+  const tryBlock = callbackSource.slice(
+    callbackSource.indexOf("  try {"),
+    callbackSource.indexOf("  } catch (error) {")
+  );
+  check(
+    "47 no redirect happens inside the callback's try block",
+    tryBlock.length > 0 && !tryBlock.includes("redirect("),
+    tryBlock.split("\n").filter((l) => l.includes("redirect(")).slice(0, 2)
+  );
+  check(
+    "48 the callback never lands on a route that does not exist",
+    !callbackSource.includes("/settings/connections")
+  );
+
+  // -----------------------------------------------------------------------
+  // Ownership cannot be proved from a field the SDK does not return
+  // -----------------------------------------------------------------------
+
+  const composioSource = readFileSync(
+    new URL("../server/connectors/composio.ts", import.meta.url),
+    "utf8"
+  );
+  check(
+    "49 ownership is not decided by comparing a userId field on an account",
+    !/account\.userId\s*===|\.userId\s*!==\s*composioUserId/.test(composioSource)
+  );
+  check(
+    "50 accounts are scoped by the server-side userIds filter",
+    composioSource.includes("userIds: [composioUserId]")
+  );
+
+  // -----------------------------------------------------------------------
+  // Binding an account
+  //
+  // The upsert targets a unique index by column list. When that index was
+  // partial, Postgres could not infer it and every bind failed with 42P10 —
+  // accounts authorised at the provider could never be recorded here. The
+  // conflict target has to keep working, so it is exercised rather than
+  // assumed.
+  // -----------------------------------------------------------------------
+
+  const { bindAccount, listAccounts } = await import("../server/connectors/accounts.ts");
+
+  const bound = await bindAccount({
+    workspaceId: alice.workspaceId,
+    userId: alice.userId,
+    provider: "gmail",
+    composioUserId: alice.userId,
+    connectedAccountId: "ca_bind_test",
+    accountEmail: "bind@example.test",
+  });
+  check("51 an account binds through the upsert conflict target", bound.status === "active");
+
+  const rebound = await bindAccount({
+    workspaceId: alice.workspaceId,
+    userId: alice.userId,
+    provider: "gmail",
+    composioUserId: alice.userId,
+    connectedAccountId: "ca_bind_test",
+    accountEmail: "bind@example.test",
+  });
+  check("52 re-binding the same account is idempotent", rebound.id === bound.id);
+
+  const mine = await listAccounts({
+    workspaceId: alice.workspaceId,
+    userId: alice.userId,
+  });
+  check(
+    "53 binding twice leaves one row",
+    mine.filter((a) => a.connectedAccountId === "ca_bind_test").length === 1
+  );
+
+  // Switching to a different mailbox on the same provider is legitimate, and
+  // used to fail with a raw 23505 from the one-live-account index.
+  const switched = await bindAccount({
+    workspaceId: alice.workspaceId,
+    userId: alice.userId,
+    provider: "gmail",
+    composioUserId: alice.userId,
+    connectedAccountId: "ca_bind_other",
+    accountEmail: "other@example.test",
+  });
+  check("54 connecting a different mailbox succeeds", switched.status === "active");
+
+  const afterSwitch = await listAccounts({
+    workspaceId: alice.workspaceId,
+    userId: alice.userId,
+  });
+  const liveGmail = afterSwitch.filter(
+    (a) => a.provider === "gmail" && a.status === "active"
+  );
+  check(
+    "55 only one gmail mailbox stays live, the newest",
+    liveGmail.length === 1 && liveGmail[0].connectedAccountId === "ca_bind_other",
+    liveGmail.map((a) => a.connectedAccountId)
+  );
+
+  // -----------------------------------------------------------------------
+  // A failure has to be readable, or the next one costs an afternoon
+  // -----------------------------------------------------------------------
+
+  const { errorFields } = await import("../lib/logger.ts");
+  const postgrest = errorFields({
+    code: "42P10",
+    details: null,
+    hint: null,
+    message: "there is no unique or exclusion constraint matching the ON CONFLICT specification",
+  });
+  check(
+    "56 a Supabase error logs its message, not [object Object]",
+    typeof postgrest.message === "string" && postgrest.message.includes("ON CONFLICT")
+  );
+  check("57 it keeps the SQLSTATE code", postgrest.code === "42P10");
+  check(
+    "58 an object with no message still serialises to something",
+    String(errorFields({ weird: true }).message).includes("weird")
+  );
+
+  // -----------------------------------------------------------------------
+  // A connected account with no grant is inert
+  //
+  // This is the design, and it is also how a working mailbox can look broken:
+  // the account binds, the model gets no tools, and nothing says why. The
+  // guarantee worth pinning is that granting is the only thing that changes
+  // it — not connecting, and not workspace membership.
+  // -----------------------------------------------------------------------
+
+  // A clean tenant, so the one-live-mailbox rule does not interfere.
+  const inertAccount = await makeAccount(mallory, "outlook");
+  const inert = await discoverActions({
+    workspaceId: mallory.workspaceId,
+    userId: mallory.userId,
+    assistantId: mallory.assistantId,
+  });
+  check(
+    "59 a freshly connected account discovers nothing until granted",
+    inert.length === 0,
+    inert.map((a) => a.toolName)
+  );
+
+  await grant(mallory, inertAccount, ["read"]);
+  const granted = await discoverActions({
+    workspaceId: mallory.workspaceId,
+    userId: mallory.userId,
+    assistantId: mallory.assistantId,
+  });
+  check(
+    "60 granting read is what makes it discoverable",
+    granted.some((a) => a.accountId === inertAccount && a.actionKey === "email.search"),
+    granted.map((a) => a.toolName)
+  );
+  check(
+    "61 and it still does not unlock send",
+    !granted.some((a) => a.actionKey === "email.send")
+  );
+
+  // -----------------------------------------------------------------------
+  // Provider quirks that cost real debugging time
+  // -----------------------------------------------------------------------
+
+  const { PROVIDER_TOOLS } = await import("../server/connectors/composio.ts");
+
+  // Measured: OUTLOOK_SEARCH_MESSAGES refuses personal accounts outright, while
+  // LIST with a `search` term works on personal and Microsoft 365 alike. Since
+  // personal accounts are supported, the tool that works everywhere is the one
+  // wired in.
+  check(
+    "62 outlook search uses the tool that works on personal accounts",
+    PROVIDER_TOOLS.outlook.search === "OUTLOOK_LIST_MESSAGES"
+  );
+
+  // An empty search is not "show me everything". Both providers reject it, and
+  // pulling a whole mailbox into a model is not something to do by accident.
+  const emptySearch = await runAction({
+    actionKey: "email.search",
+    accountId: account,
+    args: { query: "   ", limit: 5 },
+    callId: "call_empty",
+    sessionId: "sess_empty",
+  });
+  check("63 an empty search is refused, not widened", emptySearch.ok === false);
+
+  // A pinned toolkit version is required. Composio refuses a manual execution
+  // without one, and an unpinned row is a configuration error rather than an
+  // invitation to silently take the newest version.
+  const { data: pinned } = await admin
+    .from("connector_actions")
+    .select("tool_version")
+    .eq("action_key", "email.search")
+    .eq("provider", "outlook")
+    .single<{ tool_version: string }>();
+  check(
+    "64 the register pins a concrete toolkit version",
+    typeof pinned?.tool_version === "string" && pinned.tool_version !== "unpinned",
+    pinned?.tool_version
+  );
+
+  const composioSrc = readFileSync(
+    new URL("../server/connectors/composio.ts", import.meta.url),
+    "utf8"
+  );
+  check(
+    "65 an unpinned version fails closed instead of defaulting",
+    composioSrc.includes('input.version === "unpinned"')
+  );
+  // The account must travel in the request body: the session API routes through
+  // Composio's Tool Router, which picks its own connection and answers
+  // NoActiveConnection even when ours is active.
+  check(
+    "66 execution names the connected account explicitly",
+    composioSrc.includes("tools.execute") &&
+      composioSrc.includes("connectedAccountId: input.connectedAccountId")
+  );
 }
 
 try {
@@ -527,7 +787,7 @@ try {
   failed += 1;
   console.error("ERROR", error);
 } finally {
-  await setEnabled(["email.search", "email.read", "email.send"], false);
+  await restoreRegister().catch(() => undefined);
   for (const ws of workspaces) await ws.remove().catch(() => undefined);
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);

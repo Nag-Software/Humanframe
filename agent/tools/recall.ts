@@ -60,4 +60,21 @@ export default defineTool({
       })),
     };
   },
+  /**
+   * Remembering nothing is an answer.
+   *
+   * Handed an empty array, the likeliest next move is to stop — and the user
+   * is left unable to tell "I have no memory of that" from "something broke".
+   */
+  toModelOutput(output) {
+    if (output.memories.length === 0) {
+      return {
+        type: "text",
+        value:
+          "You have no memory of that. Say so plainly — do not end the turn " +
+          "in silence — and answer from what you do know, or ask.",
+      };
+    }
+    return { type: "json", value: output };
+  },
 });

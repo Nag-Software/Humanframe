@@ -9,13 +9,16 @@ import {
   endCallSession,
 } from "@/server/call/binding";
 import { buildCallInstructions } from "@/server/call/context";
-import { checkCallLimits, reapStaleCalls } from "@/server/call/limits";
 import {
-  REALTIME_MODEL,
-  createRealtimeCall,
-  realtimeSessionConfig,
-} from "@/server/call/openai-realtime";
-import { CALL_TOOLS } from "@/server/call/tools";
+  checkCallLimits,
+  endAbandonedCalls,
+  reapStaleCalls,
+} from "@/server/call/limits";
+import {
+  createLiveSession,
+  liveModel,
+  liveSessionConfig,
+} from "@/server/call/openai-live";
 import { getAssistantBySlug } from "@/server/db/repositories/assistants";
 import {
   ensureThread,
@@ -70,6 +73,21 @@ export async function POST(req: Request) {
   // A call that was never hung up must not hold the concurrency slot forever.
   await reapStaleCalls(scope.workspaceId);
 
+  // This user is starting a call, so any call of theirs still marked open
+  // belongs to a page that is gone — a reload, a crash, a closed tab. Ending
+  // it here is what stops the concurrency cap from locking them out of their
+  // own abandoned session until the stale sweep catches up.
+  const superseded = await endAbandonedCalls({
+    workspaceId: scope.workspaceId,
+    userId: scope.userId,
+  });
+  if (superseded > 0) {
+    logger.info("call.superseded", {
+      workspaceId: scope.workspaceId,
+      count: superseded,
+    });
+  }
+
   const verdict = await checkCallLimits({
     workspaceId: scope.workspaceId,
     userId: scope.userId,
@@ -107,13 +125,13 @@ export async function POST(req: Request) {
     threadId,
     userId: scope.userId,
     provider: "openai_realtime",
-    model: REALTIME_MODEL,
+    model: liveModel(),
   });
 
   try {
-    const { answerSdp, providerCallId } = await createRealtimeCall({
+    const { answerSdp, providerCallId } = await createLiveSession({
       offerSdp: parsed.data.sdp,
-      session: realtimeSessionConfig({ instructions, tools: CALL_TOOLS }),
+      session: liveSessionConfig({ instructions }),
     });
 
     await attachProviderCall(binding, providerCallId);
@@ -122,7 +140,7 @@ export async function POST(req: Request) {
       workspaceId: scope.workspaceId,
       threadId,
       callSessionId: binding.callSessionId,
-      model: REALTIME_MODEL,
+      model: liveModel(),
     });
 
     return Response.json({

@@ -91,6 +91,69 @@ export default defineDynamic({
               sessionId: toolCtx.session.id,
             });
           },
+          /**
+           * What the model is told, and what it owes the user.
+           *
+           * Without this the model receives the raw outcome object. An empty
+           * result then looks like a success containing nothing, and the
+           * likeliest next move is to stop — which leaves the user staring at
+           * a tool card with no answer. The three outcomes that most often end
+           * a turn silently are the three spelled out here: nothing found, a
+           * refusal, and a result that still needs summarising.
+           */
+          toModelOutput(output) {
+            const outcome = output as {
+              ok: boolean;
+              error?: string;
+              awaitingApproval?: boolean;
+              result?: { messages?: unknown[] };
+            };
+
+            if (!outcome.ok) {
+              return {
+                type: "text",
+                value:
+                  `This did not work: ${outcome.error ?? "unknown reason"}. ` +
+                  "Tell the user what happened in one sentence, in their own " +
+                  "language, and say what they can do about it. Do not end the " +
+                  "turn without saying it.",
+              };
+            }
+
+            if (outcome.awaitingApproval) {
+              return {
+                type: "text",
+                value:
+                  "The message is prepared and shown to the user for approval. " +
+                  "Nothing has been sent. Say what you have prepared and ask " +
+                  "them to approve it.",
+              };
+            }
+
+            const messages = outcome.result?.messages ?? [];
+            if (messages.length === 0) {
+              return {
+                type: "text",
+                value:
+                  "Nothing matched that search. Say so plainly, and suggest a " +
+                  "different term or a narrower time range. An empty result is " +
+                  "still an answer the user needs to hear — never end the turn " +
+                  "here in silence.",
+              };
+            }
+
+            return {
+              type: "json",
+              value: {
+                found: messages.length,
+                messages,
+                instruction:
+                  "Summarise these for the user in their own language. Do not " +
+                  "list raw fields, and do not end the turn without a written " +
+                  "answer.",
+              },
+            };
+          },
         });
       }
 

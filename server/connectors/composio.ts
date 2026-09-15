@@ -32,7 +32,14 @@ export const PROVIDER_TOOLS = {
     send: "GMAIL_SEND_EMAIL",
   },
   outlook: {
-    search: "OUTLOOK_SEARCH_MESSAGES",
+    // Deliberately LIST, not OUTLOOK_SEARCH_MESSAGES. Measured on 2026-09-15:
+    // the search tool refuses personal accounts outright ("Search does not work
+    // with @hotmail.com or @outlook.com personal accounts"), while LIST with a
+    // `search` term works on both personal and Microsoft 365 mailboxes. Since
+    // Humanframe supports personal accounts, the tool that works everywhere is
+    // the one we ship; the other stays allowlisted for work/school tenants.
+    search: "OUTLOOK_LIST_MESSAGES",
+    searchWorkAccountOnly: "OUTLOOK_SEARCH_MESSAGES",
     thread: "OUTLOOK_GET_MESSAGE",
     send: "OUTLOOK_SEND_EMAIL",
   },
@@ -181,7 +188,19 @@ type RawAccount = {
   data?: Record<string, unknown>;
 };
 
-/** Every account Composio has filed under this user, for one toolkit. */
+/**
+ * Every account Composio has filed under this user, for one toolkit.
+ *
+ * The scoping is the `userIds` filter, applied server-side by Composio — not a
+ * field comparison here. List items in this SDK version carry no user field at
+ * all, so re-filtering on one silently matches nothing and every ownership
+ * check fails closed against legitimate callers.
+ *
+ * Measured on 2026-09-15 before relying on it: unfiltered returns 10 accounts,
+ * this user returns exactly theirs, and a nonexistent user returns none. The
+ * filter is enforced rather than ignored, so membership in this list is a
+ * sound ownership proof.
+ */
 async function listUserAccounts(
   composioUserId: string,
   provider: EmailProvider
@@ -191,9 +210,7 @@ async function listUserAccounts(
     toolkitSlugs: [provider],
   } as never)) as { items?: RawAccount[] };
 
-  return (page.items ?? []).filter(
-    (account) => account.userId === composioUserId
-  );
+  return page.items ?? [];
 }
 
 /**
@@ -256,12 +273,52 @@ export async function executeProviderTool(input: {
   composioUserId: string;
   connectedAccountId: string;
   slug: string;
+  version: string;
   args: Record<string, unknown>;
 }): Promise<unknown> {
-  const session = await composioClient().create(input.composioUserId);
-  return session.execute(input.slug, input.args, {
+  // Composio refuses a manual execution without an explicit toolkit version,
+  // and that is the right default: a toolkit that changes shape underneath a
+  // pinned action is exactly the drift the register exists to catch. An
+  // unpinned row is a configuration error, not something to paper over by
+  // silently taking the newest version.
+  if (!input.version || input.version === "unpinned") {
+    throw new Error(
+      `No toolkit version pinned for ${input.slug}. Set connector_actions.tool_version.`
+    );
+  }
+
+  // `tools.execute`, not `session.execute`. The session API routes through
+  // Composio's Tool Router, which manages connection selection itself and
+  // ignores an account passed alongside the arguments — it answers
+  // `ToolRouterV2_NoActiveConnection` even when the account is active, because
+  // it is looking at its own session state rather than at ours.
+  //
+  // Here the account is part of the request body, which is what makes the
+  // choice explicit. That matters beyond fixing the error: the whole design
+  // says the account is chosen by Humanframe from a verified grant, never by
+  // the provider picking "the last connected one".
+  const response = (await composioClient().tools.execute(input.slug, {
+    userId: input.composioUserId,
     connectedAccountId: input.connectedAccountId,
-  } as never);
+    version: input.version,
+    arguments: input.args,
+  })) as { data?: unknown; error?: string | null; successful?: boolean };
+
+  if (response.successful === false) {
+    throw new Error(response.error ?? "The provider rejected the call");
+  }
+
+  return response.data ?? response;
+}
+
+/** The toolkit versions Composio currently offers, newest first. */
+export async function availableToolkitVersions(
+  provider: EmailProvider
+): Promise<string[]> {
+  const toolkit = (await composioClient().toolkits.get(provider)) as {
+    meta?: { availableVersions?: string[] };
+  };
+  return toolkit.meta?.availableVersions ?? [];
 }
 
 /** Revokes at the broker, so disconnecting is not merely a local flag. */

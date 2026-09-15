@@ -143,9 +143,17 @@ function buildArgs(
 
   if (action.action_key === "email.search") {
     const query = (args.query ?? "").trim().slice(0, 400);
+
+    // Both providers reject an empty search rather than returning a mailbox,
+    // which is the behaviour we want anyway: "show me everything" is not a
+    // search, and a whole inbox is not something to pull into a model.
+    if (!query) {
+      return { ok: false, error: "Ask what to search for before searching." };
+    }
+
     return action.provider === "gmail"
       ? { ok: true, value: { query, max_results: limit } }
-      : { ok: true, value: { query, size: limit } };
+      : { ok: true, value: { search: query, top: limit } };
   }
 
   if (action.action_key === "email.read") {
@@ -219,6 +227,24 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
+/**
+ * Turns a provider error into something a person can act on.
+ *
+ * Capped, single-line, and stripped of anything that looks like an address, so
+ * an error string can never become a channel for mailbox contents.
+ */
+function providerGuidance(message: string): string {
+  const cleaned = message
+    .replace(/\s+/g, " ")
+    .replace(/[\w.+-]+@[\w.-]+/g, "[address]")
+    .trim();
+
+  if (cleaned.length === 0) {
+    return "The mail provider could not complete that.";
+  }
+  return `The mail provider refused that: ${cleaned.slice(0, 300)}`;
+}
+
 export function hashPayload(payload: unknown): string {
   return createHash("sha256")
     .update(JSON.stringify(canonical(payload)))
@@ -286,15 +312,24 @@ async function executeNow(input: {
       composioUserId: account.userId,
       connectedAccountId: await connectedAccountIdFor(account.id),
       slug: action.tool_slug,
+      version: action.tool_version,
       args: payload,
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
     logger.error("connector.provider_call_failed", {
       actionKey: action.action_key,
       provider: action.provider,
-      message: error instanceof Error ? error.message : String(error),
+      message,
     });
-    return { ok: false, error: "The mail provider could not complete that." };
+
+    // Provider guidance is worth passing on. "Search does not work with
+    // personal accounts" tells the user something they can act on, whereas a
+    // generic failure taught them nothing and cost an afternoon of guessing.
+    // It is API guidance about the request, not mailbox content — but it is
+    // still provider text, so it is capped and labelled rather than trusted.
+    return { ok: false, error: providerGuidance(message) };
   }
 
   const normalized = normalize(action.normalizer, raw);

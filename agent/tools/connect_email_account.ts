@@ -108,7 +108,9 @@ export default defineTool({
       type: "text",
       value: output.offered
         ? `A connect button for ${output.provider} is now shown to the user. Ask them to use it, and wait.`
-        : (output.note ?? "The connection link could not be created."),
+        : "connected" in output && output.connected
+          ? `${output.provider} is already connected. Say so; do not offer a link.`
+          : (output.note ?? "The connection link could not be created."),
     };
   },
 });

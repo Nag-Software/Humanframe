@@ -1,20 +1,23 @@
 import { randomUUID } from "node:crypto";
 
+// First: its module scope loads .env.local, and the call modules below read the
+// validated environment as they are evaluated.
+import { admin, createTestWorkspace, type TestWorkspace } from "./memory-support.mts";
+
 import {
   createCallSession,
   endCallSession,
   loadCallBinding,
   type CallBinding,
 } from "../server/call/binding.ts";
-import { CALL_TOOLS, executeCallTool, isCallTool } from "../server/call/tools.ts";
+import { endAbandonedCalls } from "../server/call/limits.ts";
 import { recordCallTurn, previousUserTurn } from "../server/call/transcript.ts";
 import {
-  turnFromEvent,
-  toolCallFromEvent,
-  realtimeSessionConfig,
-} from "../server/call/openai-realtime.ts";
-import { admin, createTestWorkspace, type TestWorkspace } from "./memory-support.mts";
-
+  delegationFromEvent,
+  liveSessionConfig,
+  transcriptDeltaFromEvent,
+} from "../server/call/openai-live.ts";
+import { TurnAssembler, TURN_GAP_MS } from "../lib/call/turn-assembler.ts";
 /**
  * Deterministic tests for Call.
  *
@@ -238,98 +241,6 @@ async function main(): Promise<void> {
   );
 
   // -----------------------------------------------------------------------
-  // Tool execution: scope comes from the binding, never from arguments
-  // -----------------------------------------------------------------------
-
-  check("20 only the three phase 5 tools exist", CALL_TOOLS.length === 3);
-  check("21 unknown tools are refused", !isCallTool("draft_email"));
-
-  const refused = await executeCallTool(call, "draft_email", {}, "call_x");
-  check("22 an unlisted tool returns an error, not an action", refused.ok === false);
-
-  const due = new Date(Date.now() + 3 * 24 * 3600_000).toISOString();
-  const scheduled = await executeCallTool(
-    call,
-    "schedule_followup",
-    {
-      title: "Ringe Anders",
-      dueAt: due,
-      kind: "remind",
-      // A hostile model trying to widen its own scope. These are ignored:
-      // there is no code path that reads scope from arguments.
-      workspaceId: mallory.workspaceId,
-      userId: mallory.userId,
-      threadId: randomUUID(),
-    },
-    "call_schedule_1"
-  );
-  check("23 a spoken reminder becomes a commitment", scheduled.ok === true);
-
-  const commitmentId = (scheduled.output as { commitmentId?: string }).commitmentId;
-  const { data: commitment } = await admin
-    .from("commitments")
-    .select("workspace_id, thread_id, user_id, dedupe_key, status")
-    .eq("id", commitmentId ?? "")
-    .single<{
-      workspace_id: string;
-      thread_id: string;
-      user_id: string;
-      dedupe_key: string;
-      status: string;
-    }>();
-
-  check(
-    "24 tool arguments cannot move a commitment to another workspace",
-    commitment?.workspace_id === alice.workspaceId
-  );
-  check("25 it is owned by the caller, not by an argument", commitment?.user_id === alice.userId);
-  check(
-    "26 it is delivered back to the call's own thread",
-    commitment?.thread_id === thread
-  );
-  check("27 it is scheduled, so the durable path owns it", commitment?.status === "scheduled");
-
-  const again = await executeCallTool(
-    call,
-    "schedule_followup",
-    { title: "Ringe Anders", dueAt: due, kind: "remind" },
-    "call_schedule_1"
-  );
-  check(
-    "28 a retried tool call claims the same commitment",
-    (again.output as { commitmentId?: string }).commitmentId === commitmentId
-  );
-
-  const { count: commitmentCount } = await admin
-    .from("commitments")
-    .select("id", { count: "exact", head: true })
-    .eq("workspace_id", alice.workspaceId);
-  check("29 no second promise was made", commitmentCount === 1, commitmentCount);
-
-  const listed = await executeCallTool(call, "list_commitments", {}, "call_list_1");
-  const listedIds = (listed.output as { commitments: { id: string }[] }).commitments.map(
-    (row) => row.id
-  );
-  check("30 list_commitments sees the new commitment", listedIds.includes(commitmentId!));
-
-  // The same tool, run for a call in another tenant, must see nothing of ours.
-  const mThread = await makeThread(mallory);
-  const mCall = await makeCall(mallory, mThread);
-  const mList = await executeCallTool(mCall, "list_commitments", {}, "call_list_2");
-  check(
-    "31 another tenant's call sees none of it",
-    (mList.output as { commitments: unknown[] }).commitments.length === 0
-  );
-
-  const badDate = await executeCallTool(
-    call,
-    "schedule_followup",
-    { title: "Noe", dueAt: "på fredag", kind: "remind" },
-    "call_schedule_bad"
-  );
-  check("32 a spoken date that never resolved is refused", badDate.ok === false);
-
-  // -----------------------------------------------------------------------
   // Ordinary call replies notify nobody
   // -----------------------------------------------------------------------
 
@@ -404,101 +315,153 @@ async function main(): Promise<void> {
   );
   check("38 the message records which provider produced it", tavusMessage?.metadata.call.provider === "tavus");
 
-  const tavusTool = await executeCallTool(
-    tavusBinding,
-    "list_commitments",
-    {},
-    "tavus-call-1"
-  );
-  check("39 the shared executor runs for another provider", tavusTool.ok === true);
-
   // -----------------------------------------------------------------------
-  // The OpenAI adapter, in isolation
+  // The OpenAI Live adapter, in isolation
   // -----------------------------------------------------------------------
 
   check(
-    "40 a partial transcript is not a turn",
-    turnFromEvent({
-      type: "conversation.item.input_audio_transcription.delta",
-      item_id: "item_1",
-      transcript: "halv",
+    "39 an empty fragment is not a transcript delta",
+    transcriptDeltaFromEvent({
+      type: "session.input_transcript.delta",
+      delta: "",
+      start_ms: 0,
+      end_ms: 0,
     }) === null
   );
 
-  const userTurn = turnFromEvent({
-    type: "conversation.item.input_audio_transcription.completed",
-    item_id: "item_1",
-    transcript: "  hele setningen  ",
+  const userDelta = transcriptDeltaFromEvent({
+    type: "session.input_transcript.delta",
+    delta: "hele ",
+    start_ms: 1000,
+    end_ms: 1200,
+  });
+  check("40 an input fragment is the user speaking", userDelta?.role === "user");
+
+  const mayaDelta = transcriptDeltaFromEvent({
+    type: "session.output_transcript.delta",
+    delta: "svar",
+    start_ms: 3000,
+    end_ms: 3200,
   });
   check(
-    "41 a completed transcription is a user turn",
-    userTurn?.role === "user" && userTurn.text === "hele setningen"
+    "41 an output fragment is the assistant speaking",
+    mayaDelta?.role === "assistant"
   );
 
-  const cutTurn = turnFromEvent({
-    type: "conversation.item.done",
-    item: {
-      id: "item_2",
-      role: "assistant",
-      status: "incomplete",
-      content: [{ type: "output_audio", transcript: "Jeg kan også" }],
-    },
-  });
-  check("42 an incomplete item is an interrupted turn", cutTurn?.interrupted === true);
-
-  const doneTurn = turnFromEvent({
-    type: "conversation.item.done",
-    item: {
-      id: "item_3",
-      role: "assistant",
-      status: "completed",
-      content: [{ type: "output_audio", transcript: "Ferdig." }],
-    },
-  });
-  check("43 a completed item is not interrupted", doneTurn?.interrupted === false);
-
   check(
-    "44 a partial argument stream is not a tool call",
-    toolCallFromEvent({
-      type: "response.function_call_arguments.delta",
-      name: "schedule_followup",
-      call_id: "call_1",
-      arguments: '{"tit',
+    "42 a delegation aimed elsewhere is not ours to answer",
+    delegationFromEvent({
+      type: "session.delegation.created",
+      delegation: { id: "item_1", target: "responses" },
     }) === null
   );
 
-  const parsedCall = toolCallFromEvent({
-    type: "response.function_call_arguments.done",
-    name: "recall",
-    call_id: "call_1",
-    arguments: '{"query":"Anders"}',
+  const delegation = delegationFromEvent({
+    type: "session.delegation.created",
+    delegation: { id: "item_9", target: "client" },
   });
   check(
-    "45 a finished argument stream is a tool call",
-    parsedCall?.name === "recall" &&
-      (parsedCall.args as { query: string }).query === "Anders"
+    "43 a client delegation carries the id the reply must quote",
+    delegation?.delegationId === "item_9"
   );
 
-  const config = realtimeSessionConfig({
-    instructions: "You are Maya.",
-    tools: CALL_TOOLS,
-  }) as {
-    tools: { name: string }[];
-    instructions: string;
-    audio: { input: { turn_detection: { interrupt_response: boolean } } };
+  // Turn assembly. Live never declares a transcript finished, so every
+  // boundary below is drawn from the timestamps and nothing else.
+  const assembler = new TurnAssembler();
+  check(
+    "44 a turn stays open while its speaker keeps talking",
+    assembler.push({ role: "user", text: "hele ", startMs: 0, endMs: 200 }) ===
+      null &&
+      assembler.push({
+        role: "user",
+        text: "setningen",
+        startMs: 250,
+        endMs: 500,
+      }) === null
+  );
+
+  const closedBySpeaker = assembler.push({
+    role: "assistant",
+    text: "Ja.",
+    startMs: 600,
+    endMs: 800,
+  });
+  check(
+    "45 the other speaker starting closes the turn",
+    closedBySpeaker?.role === "user" && closedBySpeaker.text === "hele setningen"
+  );
+
+  const closedByGap = assembler.push({
+    role: "assistant",
+    text: "Og forresten.",
+    startMs: 801 + TURN_GAP_MS,
+    endMs: 900 + TURN_GAP_MS,
+  });
+  check("46 a long enough silence closes the turn too", closedByGap?.text === "Ja.");
+
+  check(
+    "47 the turn still being spoken is visible to a delegation",
+    assembler.context().some((turn) => turn.text === "Og forresten.")
+  );
+
+  const stable = new TurnAssembler();
+  stable.push({ role: "user", text: "a", startMs: 10, endMs: 20 });
+  check(
+    "48 a turn's id comes from when it started, so relaying twice is safe",
+    stable.flush()?.sourceId === "user:10"
+  );
+
+  const config = liveSessionConfig({ instructions: "You are Maya." }) as {
+    model: string;
+    delegation: { type: string };
+    audio: { output: { voice: string } };
   };
   check(
-    "46 the session offers exactly the shared tools",
-    config.tools.map((tool) => tool.name).join(",") ===
-      CALL_TOOLS.map((tool) => tool.name).join(",")
+    "49 backend work is delegated to us, not to the provider",
+    config.delegation.type === "client"
   );
   check(
-    "47 interruption is enabled at the provider",
-    config.audio.input.turn_detection.interrupt_response === true
-  );
-  check(
-    "48 no credential is in the session configuration",
+    "50 no credential is in the session configuration",
     !JSON.stringify(config).includes("sk-")
+  );
+
+  // -----------------------------------------------------------------------
+  // An abandoned call must not lock its owner out
+  // -----------------------------------------------------------------------
+
+  // A workspace of its own, so the count below means exactly what it says:
+  // alice is still carrying an open call from the provider-neutral section.
+  const abe = await createTestWorkspace("call-abe");
+  workspaces.push(abe);
+
+  const abandoned = await makeCall(abe, await makeThread(abe));
+  const foreign = await makeCall(mallory, await makeThread(mallory));
+
+  const superseded = await endAbandonedCalls({
+    workspaceId: abe.workspaceId,
+    userId: abe.userId,
+  });
+  check(
+    "51 starting again ends the caller's own open call",
+    superseded === 1,
+    superseded
+  );
+
+  const reloaded = await loadCallBinding({
+    callSessionId: abandoned.callSessionId,
+    workspaceId: abe.workspaceId,
+    userId: abe.userId,
+  });
+  check("52 the abandoned call is ended, not left open", reloaded?.status === "ended");
+
+  const untouched = await loadCallBinding({
+    callSessionId: foreign.callSessionId,
+    workspaceId: mallory.workspaceId,
+    userId: mallory.userId,
+  });
+  check(
+    "53 someone else's live call is not hung up for them",
+    untouched?.status === "connecting"
   );
 }
 

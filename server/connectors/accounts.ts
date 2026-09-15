@@ -121,7 +121,21 @@ export async function consumeAuthorizationState(
     : null;
 }
 
-/** Writes the binding, once the account's ownership has been verified. */
+/**
+ * Writes the binding, once the account's ownership has been verified.
+ *
+ * Two unique indexes apply here and they answer different questions. One keeps
+ * a given provider account from being bound twice; the other enforces the
+ * actual product rule — **one live mailbox per provider, per user, per
+ * workspace**. An upsert can only resolve conflicts on one of them, so
+ * connecting a second, different Gmail address used to resolve the first index
+ * and then violate the second with a raw 23505.
+ *
+ * Switching mailboxes is a legitimate thing to do, so it is handled rather than
+ * rejected: any other live account for the same provider is retired first, and
+ * the new one takes its place. Retiring before binding also means an
+ * interrupted run leaves less access rather than more.
+ */
 export async function bindAccount(input: {
   workspaceId: string;
   userId: string;
@@ -130,7 +144,32 @@ export async function bindAccount(input: {
   connectedAccountId: string;
   accountEmail: string | null;
 }): Promise<ConnectorAccount> {
-  const { data, error } = await connectorClient()
+  const client = connectorClient();
+
+  // Retire any other live mailbox for this provider. Scoped by connected
+  // account id so re-binding the *same* account is untouched and stays
+  // idempotent.
+  const { error: retireError } = await client
+    .from("connector_accounts")
+    .update({
+      status: "disconnected",
+      disconnected_at: new Date().toISOString(),
+    })
+    .eq("workspace_id", input.workspaceId)
+    .eq("user_id", input.userId)
+    .eq("provider", input.provider)
+    .neq("connected_account_id", input.connectedAccountId)
+    .in("status", ["pending", "active", "expired"]);
+
+  if (retireError) {
+    logger.error("connector.retire_previous_failed", {
+      provider: input.provider,
+      ...errorFields(retireError),
+    });
+    throw new Error("Could not save the connection");
+  }
+
+  const { data, error } = await client
     .from("connector_accounts")
     .upsert(
       {

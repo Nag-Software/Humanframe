@@ -11,24 +11,36 @@ import { readOwnedAccount } from "@/server/connectors/composio";
 /**
  * Where an OAuth round lands.
  *
- * Composio appends `status` and `connected_account_id` to this URL, and
- * neither is evidence: anyone can craft the same request. Three things must
- * hold before a binding is written, and each rules out a different attack.
+ * Composio appends `status` and `connected_account_id` to this URL, and neither
+ * is evidence: anyone can craft the same request. Three things must hold before
+ * a binding is written, and each rules out a different attack.
  *
- *  1. The `state` must be one we minted, unconsumed and unexpired. That ties
- *     the callback to a real flow started by a signed-in user, and makes it
- *     single-use so a replay binds nothing.
- *  2. The caller must still be signed in as that same user. A state stolen
+ *  1. The `state` must be one we minted, unconsumed and unexpired — tying the
+ *     callback to a real flow, and making it single-use so a replay binds
+ *     nothing.
+ *  2. The caller must still be signed in as that same user, so a state lifted
  *     from a browser history is useless in someone else's session.
- *  3. Composio must list that account under this user, and it must be active.
- *     Without this an attacker could pass their own `connected_account_id` and
- *     have someone else's workspace bound to a mailbox they control.
+ *  3. Composio must agree the account is filed under that user. Without this an
+ *     attacker could pass their own `connected_account_id` and have someone
+ *     else's workspace bound to a mailbox they control.
+ *
+ * Note the shape: every `redirect()` happens *outside* the try block. In Next,
+ * `redirect()` works by throwing, so a redirect inside a `try` is caught by its
+ * own `catch` — which previously turned every outcome, including the successful
+ * ones, into a generic failure.
  */
+type Outcome = { ok: true; provider: string } | { ok: false; reason: string };
+
 export async function GET(req: Request) {
   if (serverEnv().CONNECTORS_ENABLED !== "true") {
-    redirect("/settings/connections?error=disabled");
+    redirect(landing({ ok: false, reason: "disabled" }));
   }
 
+  const outcome = await bind(req);
+  redirect(landing(outcome));
+}
+
+async function bind(req: Request): Promise<Outcome> {
   const url = new URL(req.url);
   const state = url.searchParams.get("state");
   const connectedAccountId = url.searchParams.get("connected_account_id");
@@ -36,55 +48,61 @@ export async function GET(req: Request) {
 
   if (!state) {
     logger.warn("connector.callback_without_state", {});
-    redirect("/settings/connections?error=invalid_state");
+    return { ok: false, reason: "invalid_state" };
   }
 
-  // Consuming first means a replay cannot get a second attempt, whatever the
-  // rest of the request looks like.
+  // Consumed first, so a replay cannot get a second attempt whatever the rest
+  // of the request looks like.
   const claim = await consumeAuthorizationState(state);
   if (!claim) {
     logger.warn("connector.callback_state_rejected", {});
-    redirect("/settings/connections?error=invalid_state");
+    return { ok: false, reason: "invalid_state" };
   }
 
-  // The session, not the URL, says who is here. Imported lazily so the check
-  // runs against this request's own cookies.
+  // The session decides who is here, not the URL.
   const { getRequestScope } = await import("@/server/db/request-scope");
   const scope = await getRequestScope();
 
-  if (!scope || scope.userId !== claim.userId || scope.workspaceId !== claim.workspaceId) {
+  if (
+    !scope ||
+    scope.userId !== claim.userId ||
+    scope.workspaceId !== claim.workspaceId
+  ) {
     logger.warn("connector.callback_wrong_session", { provider: claim.provider });
-    redirect("/settings/connections?error=wrong_user");
+    return { ok: false, reason: "wrong_user" };
   }
 
   if (status && status !== "success") {
-    redirect(`/settings/connections?error=${encodeURIComponent(status)}`);
+    return { ok: false, reason: status };
   }
-
   if (!connectedAccountId) {
-    redirect("/settings/connections?error=no_account");
+    return { ok: false, reason: "no_account" };
   }
 
   try {
-    // Ownership is proved by listing this user's accounts and finding the
-    // id — `connectedAccounts.get` carries no user field, so a fetch-by-id
-    // cannot tell us who authorised it.
+    // Ownership is proved by listing this user's own accounts and finding the
+    // id. `connectedAccounts.get` carries no user field at all, so reading one
+    // off it yields undefined — which compares unequal to every real user id,
+    // rejecting every legitimate callback while proving nothing.
     const account = await readOwnedAccount({
       connectedAccountId,
       composioUserId: claim.userId,
       provider: claim.provider,
     });
 
-    if (!account || account.status !== "active") {
+    if (!account) {
+      logger.warn("connector.callback_not_owned", { provider: claim.provider });
+      return { ok: false, reason: "not_your_account" };
+    }
+    if (account.status !== "active") {
       logger.warn("connector.callback_account_not_active", {
         provider: claim.provider,
-        status: account?.status ?? "missing",
+        status: account.status,
       });
-      redirect("/settings/connections?error=not_active");
+      return { ok: false, reason: "not_active" };
     }
-
     if (account.toolkit && account.toolkit !== claim.provider) {
-      redirect("/settings/connections?error=provider_mismatch");
+      return { ok: false, reason: "provider_mismatch" };
     }
 
     await bindAccount({
@@ -100,13 +118,24 @@ export async function GET(req: Request) {
       workspaceId: claim.workspaceId,
       provider: claim.provider,
     });
+
+    return { ok: true, provider: claim.provider };
   } catch (error) {
     logger.error("connector.callback_failed", {
       provider: claim.provider,
       ...errorFields(error),
     });
-    redirect("/settings/connections?error=bind_failed");
+    return { ok: false, reason: "bind_failed" };
   }
+}
 
-  redirect(`/settings/connections?connected=${claim.provider}`);
+/**
+ * Settings is a dialog rather than a route, so there is no `/settings/...` to
+ * land on. The outcome rides on the query string of a page that does exist; the
+ * dialog can read these to open itself on the right tab.
+ */
+function landing(outcome: Outcome): string {
+  return outcome.ok
+    ? `/?connector=${encodeURIComponent(outcome.provider)}&status=connected`
+    : `/?connector=1&error=${encodeURIComponent(outcome.reason)}`;
 }

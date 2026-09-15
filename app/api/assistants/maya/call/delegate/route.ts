@@ -3,28 +3,33 @@ import { z } from "zod";
 import { serverEnv } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { loadCallBinding } from "@/server/call/binding";
+import { runDelegation } from "@/server/call/delegation";
 import { hasExpired } from "@/server/call/limits";
-import { executeCallTool } from "@/server/call/tools";
 import { getRequestScope } from "@/server/db/request-scope";
 
 /**
- * Runs one tool for a call.
+ * Does the backend work a call asked for.
  *
- * The browser relays the model's tool call here and relays the result back. It
- * is a transport, not a participant: the workspace, the assistant, the thread
- * and the user are read from the stored call binding, so the only thing the
- * relay can influence is which of three named tools runs and with what
- * arguments — never whose data it touches.
+ * The browser relays the provider's delegation here and relays the answer
+ * back. It is a transport, not a participant: the workspace, the assistant,
+ * the thread and the user are read from the stored call binding, so the only
+ * thing the relay influences is what gets asked — never whose data answers it.
  *
- * Realtime itself has no database credential, no network path to Supabase and
- * no way to reach this route except through a browser that is already signed
- * in as the call's owner.
+ * The provider has no database credential, no network path to Supabase and no
+ * way to reach this route except through a browser already signed in as the
+ * call's owner.
  */
 const bodySchema = z.object({
   callSessionId: z.uuid(),
-  name: z.string().min(1).max(64),
-  callId: z.string().min(1).max(128),
-  args: z.unknown().optional(),
+  delegationId: z.string().min(1).max(128),
+  transcript: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        text: z.string().min(1).max(4_000),
+      })
+    )
+    .max(24),
 });
 
 export async function POST(req: Request) {
@@ -58,20 +63,21 @@ export async function POST(req: Request) {
     return Response.json({ error: "Call has expired" }, { status: 409 });
   }
 
-  const result = await executeCallTool(
+  const result = await runDelegation({
     binding,
-    parsed.data.name,
-    parsed.data.args ?? {},
-    parsed.data.callId
-  );
-
-  // The tool name and outcome, never the arguments or the output: a transcript
-  // of what the user asked for does not belong in a log line.
-  logger.info("call.tool_executed", {
-    callSessionId: binding.callSessionId,
-    tool: parsed.data.name,
-    ok: result.ok,
+    transcript: parsed.data.transcript,
+    // The agent's routes run their own auth walk on this origin, so the
+    // signed-in user's cookie is forwarded rather than a service identity.
+    cookie: req.headers.get("cookie"),
+    origin: new URL(req.url).origin,
   });
 
-  return Response.json({ output: result.output });
+  // Whether it answered, never what was said: a transcript of the user's
+  // question does not belong in a log line.
+  logger.info("call.delegation_completed", {
+    callSessionId: binding.callSessionId,
+    answered: result.answered,
+  });
+
+  return Response.json({ content: result.content });
 }

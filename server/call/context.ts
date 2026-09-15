@@ -23,14 +23,35 @@ const VOICE_ADDENDUM = `
 - Answer out loud, in short sentences a person can follow by ear.
 - No markdown, no lists, no headings, no code, no URLs read aloud.
 - One idea per turn. Let the user interrupt you; stop talking when they do.
-- When you use a tool, say what you are doing in a few words first, so the
-  silence is explained.
+- When you go and look something up, say what you are doing in a few words
+  first, so the silence is explained.
 - Before you promise a follow-up, say the day and time back in plain words and
   let the user confirm it.
-- You cannot send email, edit documents or do anything risky while on a call.
-  If the user asks for one of those, say so plainly and offer to carry on in
-  the chat, where they can approve it.
+
+## You have your tools here
+
+This is the same you as in chat, on a different channel, and you can do the
+same work: search the web, read the user's mail, look things up in your own
+memory, make promises and keep them. Ask for the work and it gets done.
+
+The one limit is approval. Anything that needs the user to agree before it
+happens — sending a message as them, spending their money — cannot be approved
+out loud. Say so in a sentence and offer to finish it in the chat.
+
+## This is a conversation, not an interview
+
+Do not wait to be asked. If something below is overdue, or you said you would
+come back to something and have not, raise it yourself — early, and in one
+sentence. If the user sounded worried about something last time you spoke, ask
+how it went.
+
+Then listen. One question at a time, and let it go if they would rather talk
+about something else. The point is that you have your own thread of the
+conversation, not that you run it.
 `;
+
+/** How many open promises are worth putting in front of her at once. */
+const OPEN_COMMITMENTS = 5;
 
 let baseInstructions: string | null = null;
 
@@ -92,10 +113,67 @@ export async function buildCallInstructions(
     sections.push("", context.text);
   }
 
+  const open = await openCommitments({
+    client: input.client,
+    workspaceId: input.workspaceId,
+    assistantId: input.assistantId,
+    userId: input.userId,
+    now,
+  });
+
+  if (open.length > 0) {
+    sections.push(
+      "",
+      "## Things you could raise yourself",
+      ...open.map((row) => `- ${row.line}`)
+    );
+  }
+
   return {
     instructions: sections.join("\n"),
     memoryIds: context?.memoryIds ?? [],
   };
+}
+
+/**
+ * The promises this user is still owed.
+ *
+ * Without these she can only react, and the call becomes an interview. They
+ * are scoped to the user as well as the workspace: a promise made to a
+ * colleague is not hers to bring up.
+ */
+async function openCommitments(input: {
+  client: SupabaseClient;
+  workspaceId: string;
+  assistantId: string;
+  userId: string;
+  now: Date;
+}): Promise<{ line: string }[]> {
+  try {
+    const { data } = await input.client
+      .from("commitments")
+      .select("title, due_at")
+      .eq("workspace_id", input.workspaceId)
+      .eq("assistant_id", input.assistantId)
+      .eq("user_id", input.userId)
+      .not("status", "in", '("done","cancelled")')
+      .order("due_at", { ascending: true })
+      .limit(OPEN_COMMITMENTS)
+      .returns<{ title: string; due_at: string }[]>();
+
+    return (data ?? []).map((row) => {
+      const due = new Date(row.due_at);
+      const overdue = due.getTime() < input.now.getTime();
+      return {
+        line: overdue
+          ? `${row.title} — overdue since ${due.toISOString()}`
+          : `${row.title} — due ${due.toISOString()}`,
+      };
+    });
+  } catch {
+    // An empty list is a quieter Maya, never a call that fails to connect.
+    return [];
+  }
 }
 
 /** Human-readable local time, so the model does not have to do the arithmetic. */

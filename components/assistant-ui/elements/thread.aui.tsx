@@ -299,11 +299,61 @@ const ComposerAction: FC = () => {
   );
 };
 
+/**
+ * Turns a failure into a sentence.
+ *
+ * A turn that dies before Maya writes anything is the worst thing the thread
+ * can show: the user cannot tell a working empty result from a broken one. The
+ * raw string is no better — `MODEL_CALL_FAILED: Failed after 3 attempts. Last
+ * error: GatewayRateLimitError…` tells a person nothing they can act on.
+ *
+ * So the known classes get a plain sentence and a next step, and the original
+ * text stays underneath for whoever is debugging. Nothing is invented: this
+ * explains a failure, it does not paper over one with a fake answer.
+ */
+function failureMessage(
+  raw: string,
+  t: ReturnType<typeof useTranslations>
+): string {
+  const text = raw.toLowerCase();
+
+  if (text.includes("rate limit") || text.includes("rate-limited") || text.includes("429")) {
+    return t.maya.failure.rateLimited;
+  }
+  if (
+    text.includes("do not have access") ||
+    text.includes("no_providers_available") ||
+    text.includes("restrictedmodels")
+  ) {
+    return t.maya.failure.modelUnavailable;
+  }
+  if (text.includes("fetch") || text.includes("network") || text.includes("econn")) {
+    return t.maya.failure.network;
+  }
+  return t.maya.failure.unknown;
+}
+
 const MessageError: FC = () => {
+  const t = useTranslations();
+  const raw = useAuiState((s) => {
+    const status = s.message.status;
+    if (status?.type !== "incomplete") return "";
+    const error = (status as { error?: unknown }).error;
+    return error instanceof Error ? error.message : String(error ?? "");
+  });
+
   return (
     <MessagePrimitive.Error>
-      <ErrorPrimitive.Root className="aui-message-error-root border-destructive bg-destructive/10 text-destructive dark:bg-destructive/5 mt-2 rounded-md border p-3 text-sm dark:text-red-200">
-        <ErrorPrimitive.Message className="aui-message-error-message line-clamp-2" />
+      <ErrorPrimitive.Root className="aui-message-error-root border-destructive/40 bg-destructive/5 text-foreground mt-2 flex flex-col gap-1.5 rounded-lg border p-3 text-sm">
+        <span>{failureMessage(raw, t)}</span>
+        {raw ? (
+          <details className="text-muted-foreground">
+            <summary className="cursor-pointer text-xs">
+              {t.maya.failure.details}
+            </summary>
+            <span className="mt-1 block text-xs break-words">{raw}</span>
+          </details>
+        ) : null}
       </ErrorPrimitive.Root>
     </MessagePrimitive.Error>
   );

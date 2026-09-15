@@ -56,8 +56,8 @@ const serverSchema = z.object({
   // on voice minutes just by existing.
   CALL_ENABLED: z.enum(["true", "false"]).default("false"),
   // The Realtime model and voice. Verified live before use; see
-  // server/call/openai-realtime.ts.
-  CALL_MODEL: z.string().default("gpt-realtime-2.1"),
+  // server/call/openai-live.ts.
+  CALL_MODEL: z.string().default("gpt-live-1"),
   CALL_VOICE: z.string().default("marin"),
   // Server-enforced ceilings. See server/call/limits.ts for what each one
   // actually bounds.

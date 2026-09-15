@@ -87,8 +87,58 @@ export function hasExpired(startedAt: string): boolean {
 }
 
 /**
+ * Ends this user's own calls that are still open, because they are about to
+ * start another one.
+ *
+ * The concurrency cap bounds how many media streams run at once. It was never
+ * meant to lock someone out of a call they have already walked away from, and
+ * that is what it did: a browser that reloads, crashes or navigates loses the
+ * call id it would have hung up with, so the row stayed open until the stale
+ * sweep noticed it `CALL_MAX_MINUTES` later. With the cap at one, the user
+ * simply could not call for a quarter of an hour, and restarting the dev
+ * server did nothing because the row is in the database.
+ *
+ * Starting a call is the moment we know the previous one is over: whatever was
+ * still connected belonged to a page that no longer exists. The browser
+ * already tries to say so before it starts, and cannot after a reload — this
+ * is the same intent, made reliable by being server-side.
+ *
+ * Scoped to the one user. Another person's live call is not ours to hang up,
+ * and the cap still holds against them.
+ */
+export async function endAbandonedCalls(input: {
+  workspaceId: string;
+  userId: string;
+}): Promise<number> {
+  const { data, error } = await callClient()
+    .from("call_sessions")
+    .update({
+      status: "ended",
+      end_reason: "superseded",
+      ended_at: new Date().toISOString(),
+    })
+    .eq("workspace_id", input.workspaceId)
+    .eq("user_id", input.userId)
+    .in("status", ["connecting", "active"])
+    .select("id");
+
+  if (error) {
+    logger.error("call.supersede_failed", {
+      workspaceId: input.workspaceId,
+      message: error.message,
+    });
+    return 0;
+  }
+
+  return data?.length ?? 0;
+}
+
+/**
  * Closes calls that were never hung up — a closed laptop, a lost network, a
  * crashed tab — so they stop counting against the concurrency cap.
+ *
+ * This still matters for calls nobody comes back to: `endAbandonedCalls` only
+ * runs when the same user starts another one.
  */
 export async function reapStaleCalls(workspaceId: string): Promise<void> {
   const cutoff = new Date(

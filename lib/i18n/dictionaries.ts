@@ -207,6 +207,15 @@ export const en = {
       searching: "Searching",
       readSources: "Read {count} sources",
     },
+    failure: {
+      rateLimited:
+        "Maya has hit her usage limit for now. Try again in a minute.",
+      modelUnavailable:
+        "Maya's model is not available on the current plan. Switch model or add credits.",
+      network: "Could not reach Maya. Check the connection and try again.",
+      unknown: "Something went wrong, so Maya never answered. Try again.",
+      details: "Technical details",
+    },
     connect: {
       preparing: "Preparing…",
       action: "Connect {provider}",
@@ -444,6 +453,15 @@ export const no: Dictionary = {
       toolCalls: "{count} verktøykall",
       searching: "Søker",
       readSources: "Leste {count} kilder",
+    },
+    failure: {
+      rateLimited:
+        "Maya har nådd bruksgrensen sin akkurat nå. Prøv igjen om et minutt.",
+      modelUnavailable:
+        "Mayas modell er ikke tilgjengelig på gjeldende plan. Bytt modell eller legg til credits.",
+      network: "Fikk ikke kontakt med Maya. Sjekk forbindelsen og prøv igjen.",
+      unknown: "Noe gikk galt, så Maya svarte aldri. Prøv igjen.",
+      details: "Tekniske detaljer",
     },
     connect: {
       preparing: "Klargjør…",

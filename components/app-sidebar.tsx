@@ -117,7 +117,7 @@ export function AppSidebar({
                   alt="Humanframe"
                   width={64}
                   height={64}
-                  className="size-8 bg-white"
+                  className="size-auto bg-white"
                 />
               ),
               plan: t.nav.plans[plan],
