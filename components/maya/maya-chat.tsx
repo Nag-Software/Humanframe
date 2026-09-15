@@ -6,9 +6,11 @@ import { Thread } from "@/components/assistant-ui/elements/thread.aui";
 import { EveRuntimeProvider } from "@/components/maya/eve-runtime-provider";
 import { MayaHeader, type MayaCallHandlers } from "@/components/maya/maya-header";
 import { MayaRuntimeProvider } from "@/components/maya/maya-runtime-provider";
-import { publicEnv } from "@/lib/env";
 import { MayaToolUIs } from "@/components/maya/tool-ui";
 import { MayaWelcome } from "@/components/maya/maya-welcome";
+import { NewConversation } from "@/components/maya/new-conversation";
+import { RuntimeCapabilitiesProvider } from "@/components/maya/runtime-capabilities";
+import { publicEnv } from "@/lib/env";
 import type { MayaMessage } from "@/lib/maya/tools";
 
 export function MayaChat({
@@ -27,30 +29,25 @@ export function MayaChat({
   eveSessionId?: string | null;
 } & MayaCallHandlers) {
   const components = useMemo(() => ({ Welcome: MayaWelcome }), []);
+  const runsOnEve = publicEnv.NEXT_PUBLIC_MAYA_RUNTIME === "eve";
 
-  const body = (
-    <>
-      <MayaToolUIs />
-      <div className="flex h-[calc(100svh-4rem)] flex-col">
-        <MayaHeader onVoiceCall={onVoiceCall} onVideoCall={onVideoCall} />
-        <div className="min-h-0 flex-1">
-          <Thread components={components} />
-        </div>
-      </div>
-    </>
+  const shell = (body: React.ReactNode) => (
+    <div className="flex h-[calc(100svh-4rem)] flex-col">
+      <MayaHeader onVoiceCall={onVoiceCall} onVideoCall={onVideoCall} />
+      <div className="min-h-0 flex-1">{body}</div>
+    </div>
   );
 
-  // Both runtimes render the same thread; only the transport differs.
-  if (publicEnv.NEXT_PUBLIC_MAYA_RUNTIME === "eve") {
+  if (runsOnEve) {
+    // No session yet: the conversation has not been created server-side.
+    if (!threadId || !eveSessionId) {
+      return shell(<NewConversation />);
+    }
+
     return (
-      // The hook binds its session when the store is created, so a new session
-      // needs a fresh provider rather than a prop update.
-      <EveRuntimeProvider
-        key={eveSessionId ?? "new"}
-        threadId={threadId}
-        sessionId={eveSessionId}
-      >
-        {body}
+      <EveRuntimeProvider threadId={threadId} sessionId={eveSessionId}>
+        <MayaToolUIs />
+        {shell(<Thread components={components} />)}
       </EveRuntimeProvider>
     );
   }
@@ -60,7 +57,12 @@ export function MayaChat({
       threadId={threadId ?? ""}
       initialMessages={initialMessages}
     >
-      {body}
+      <RuntimeCapabilitiesProvider
+        capabilities={{ reload: true, edit: true, branching: true }}
+      >
+        <MayaToolUIs />
+        {shell(<Thread components={components} />)}
+      </RuntimeCapabilitiesProvider>
     </MayaRuntimeProvider>
   );
 }

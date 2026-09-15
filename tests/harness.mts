@@ -1,11 +1,10 @@
 import { readFileSync } from "node:fs";
 
+import { convertEveMessages } from "@assistant-ui/eve";
 import { Client, defaultMessageReducer } from "eve/client";
 import type { EveMessage, EveMessageData } from "eve/client";
 
-import { toThreadMessage } from "../lib/maya/eve-message-adapter.ts";
-
-export type ThreadMessage = ReturnType<typeof toThreadMessage>;
+export type ThreadMessage = ReturnType<typeof convertEveMessages>[number];
 export type ThreadPart = Exclude<ThreadMessage["content"], string>[number];
 
 export function loadEnv(path = ".env.local"): Record<string, string> {
@@ -171,7 +170,7 @@ export class BridgeSession {
 
   /** What assistant-ui would render. */
   get threadMessages(): ThreadMessage[] {
-    return this.#data.messages.map(toThreadMessage);
+    return convertEveMessages(this.#data);
   }
 
   get lastAssistantMessage(): ThreadMessage | undefined {

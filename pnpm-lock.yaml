@@ -17,6 +17,9 @@ importers:
       '@assistant-ui/ai-sdk':
         specifier: ^0.0.5
         version: 0.0.5(@types/react@19.3.0)(react@19.2.8)(zod@4.6.4)
+      '@assistant-ui/eve':
+        specifier: 0.0.17
+        version: 0.0.17(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(assistant-cloud@0.2.0)(eve@0.54.5(ai@7.0.99(zod@4.6.4)))(react@19.2.8)
       '@assistant-ui/react':
         specifier: ^0.15.19
         version: 0.15.19(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(use-sync-external-store@1.7.0(react@19.2.8))
@@ -189,6 +192,16 @@ packages:
       assistant-cloud:
         optional: true
       react:
+        optional: true
+
+  '@assistant-ui/eve@0.0.17':
+    resolution: {integrity: sha512-jeLIGAGWwY6TpRfGXf9VRgAu5w+XMYeWa24xl69+rVmOv4ADV58ePgNwYwR7cXMpjaljkDFykXe1olAViJoNQQ==}
+    peerDependencies:
+      '@types/react': '*'
+      eve: '>=0.32.0'
+      react: ^18 || ^19
+    peerDependenciesMeta:
+      '@types/react':
         optional: true
 
   '@assistant-ui/react-markdown@0.14.15':
@@ -4965,6 +4978,20 @@ snapshots:
       assistant-cloud: 0.2.0
       react: 19.2.8
     transitivePeerDependencies:
+      - ioredis
+      - redis
+
+  '@assistant-ui/eve@0.0.17(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(assistant-cloud@0.2.0)(eve@0.54.5(ai@7.0.99(zod@4.6.4)))(react@19.2.8)':
+    dependencies:
+      '@assistant-ui/core': 0.3.18(@assistant-ui/store@0.3.13(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(react@19.2.8))(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(assistant-cloud@0.2.0)(react@19.2.8)
+      '@assistant-ui/store': 0.3.13(@assistant-ui/tap@0.9.17(@types/react@19.3.0)(react@19.2.8))(@types/react@19.3.0)(react@19.2.8)
+      eve: 0.54.5(ai@7.0.99(zod@4.6.4))
+      react: 19.2.8
+    optionalDependencies:
+      '@types/react': 19.3.0
+    transitivePeerDependencies:
+      - '@assistant-ui/tap'
+      - assistant-cloud
       - ioredis
       - redis
 

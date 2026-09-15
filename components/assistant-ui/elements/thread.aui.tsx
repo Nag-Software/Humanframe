@@ -27,6 +27,7 @@ import { TooltipIconButton } from "@/components/assistant-ui/elements/tooltip-ic
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { useRuntimeCapabilities } from "@/components/maya/runtime-capabilities";
 import {
   ActionBarMorePrimitive,
   ActionBarPrimitive,
@@ -421,6 +422,8 @@ const AssistantMessage: FC = () => {
 };
 
 const AssistantActionBar: FC = () => {
+  const { reload } = useRuntimeCapabilities();
+
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
@@ -432,7 +435,9 @@ const AssistantActionBar: FC = () => {
                     </AuiIf><AuiIf condition={(s) => !s.message.isCopied}>
                       <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
                     </AuiIf></ActionBarPrimitive.Copy>
-      <ActionBarPrimitive.Reload render={<TooltipIconButton tooltip="Prøv på nytt" />}><RefreshCwIcon /></ActionBarPrimitive.Reload>
+      {reload ? (
+        <ActionBarPrimitive.Reload render={<TooltipIconButton tooltip="Prøv på nytt" />}><RefreshCwIcon /></ActionBarPrimitive.Reload>
+      ) : null}
       <ActionBarMorePrimitive.Root>
         <ActionBarMorePrimitive.Trigger render={<TooltipIconButton tooltip="Mer" className="data-[state=open]:bg-accent" />}><MoreHorizontalIcon /></ActionBarMorePrimitive.Trigger>
         <ActionBarMorePrimitive.Content
@@ -490,13 +495,17 @@ const UserMessage: FC = () => {
 };
 
 const UserActionBar: FC = () => {
+  const { edit } = useRuntimeCapabilities();
+
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
       autohide="not-last"
       className="aui-user-action-bar-root flex flex-col items-end"
     >
-      <ActionBarPrimitive.Edit render={<TooltipIconButton tooltip="Rediger" className="aui-user-action-edit" />}><PencilIcon /></ActionBarPrimitive.Edit>
+      {edit ? (
+        <ActionBarPrimitive.Edit render={<TooltipIconButton tooltip="Rediger" className="aui-user-action-edit" />}><PencilIcon /></ActionBarPrimitive.Edit>
+      ) : null}
     </ActionBarPrimitive.Root>
   );
 };
@@ -527,6 +536,14 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
   className,
   ...rest
 }) => {
+  const { branching } = useRuntimeCapabilities();
+
+  // `hideWhenSingleBranch` already hides it in practice, but a runtime without
+  // branch semantics should not render the control at all.
+  if (!branching) {
+    return null;
+  }
+
   return (
     <BranchPickerPrimitive.Root
       hideWhenSingleBranch

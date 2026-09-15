@@ -252,10 +252,14 @@ function toRuntimeEvent(event: MessageStreamEvent): RuntimeEvent | null {
  * arrived with instead of a service identity.
  */
 export function getAgentRuntime(
-  options: { cookie?: string | null } = {}
+  options: { cookie?: string | null; origin?: string | null } = {}
 ): AgentRuntime {
+  // The agent is mounted on this app's own origin, so the request's origin is
+  // the most reliable host: it follows the actual port in local builds and the
+  // deployment URL in preview. APP_URL is the fallback for callers without a
+  // request, such as workflows.
   return new EveRuntime(
-    serverEnv().APP_URL,
+    options.origin ?? serverEnv().APP_URL,
     options.cookie ? { cookie: options.cookie } : undefined
   );
 }

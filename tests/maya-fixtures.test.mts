@@ -8,10 +8,10 @@
  *
  *   pnpm test
  */
+import { convertEveMessages } from "@assistant-ui/eve";
 import { defaultMessageReducer } from "eve/client";
 import type { EveMessageData } from "eve/client";
 
-import { toThreadMessage } from "../lib/maya/eve-message-adapter.ts";
 import { partsOf, toolCalls, visibleText, type ThreadPart } from "./harness.mts";
 
 type StreamEvent = Parameters<
@@ -38,7 +38,7 @@ function project(events: StreamEvent[]) {
   for (const streamEvent of events) {
     data = reducer.reduce(data, streamEvent);
   }
-  return data.messages.map(toThreadMessage);
+  return convertEveMessages(data);
 }
 
 const ARTIFACT_TOOLS = new Set([
@@ -186,7 +186,7 @@ const cases: { name: string; run: () => void }[] = [
       assert(
         approval.type === "tool-call" &&
           (approval.approval?.options ?? []).some(
-            (option) => option.kind === "reject-once"
+            (option: { kind: string }) => option.kind === "reject-once"
           ),
         "cancel should map to a reject option"
       );

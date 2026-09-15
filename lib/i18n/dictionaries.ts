@@ -20,6 +20,13 @@ export const en = {
     googleError: "Could not start Google sign-in. Try again.",
     brandTagline: "A colleague who remembers.",
   },
+  maya: {
+    greeting: "Hi, I'm Maya",
+    tagline: "Ask me anything — I can search, write and build files for you.",
+    composerPlaceholder: "Message Maya",
+    send: "Send",
+    startFailed: "Could not start the conversation. Try again.",
+  },
   nav: {
     account: "Account",
     billing: "Billing",
@@ -91,6 +98,13 @@ export const no: Dictionary = {
     dividerOr: "eller",
     googleError: "Klarte ikke å starte Google-innlogging. Prøv igjen.",
     brandTagline: "En kollega som husker.",
+  },
+  maya: {
+    greeting: "Hi, I'm Maya",
+    tagline: "Ask me anything — I can search, write and build files for you.",
+    composerPlaceholder: "Message Maya",
+    send: "Send",
+    startFailed: "Could not start the conversation. Try again.",
   },
   nav: {
     account: "Konto",

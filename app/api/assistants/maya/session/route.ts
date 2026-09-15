@@ -40,7 +40,7 @@ export async function POST(req: Request) {
   }
 
   const cookie = (await headers()).get("cookie");
-  const runtime = getAgentRuntime({ cookie });
+  const runtime = getAgentRuntime({ cookie, origin: new URL(req.url).origin });
 
   try {
     const session = await runtime.startSession({
