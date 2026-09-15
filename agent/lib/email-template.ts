@@ -127,6 +127,36 @@ function html(line: string, title: string, input: TemplateInput): string {
 }
 
 /**
+ * Resolves the origin every link in an email uses.
+ *
+ * `APP_URL` is the configured, trusted answer. The guard is for deployed
+ * environments that inherit a development value: a loopback origin in an email
+ * is a dead link, and `VERCEL_URL` is supplied by the platform rather than by a
+ * request, so it is a safe substitute. A request header is never consulted —
+ * that would be an open redirect waiting to happen.
+ */
+export function appOrigin(
+  env: Readonly<Record<string, string | undefined>> = process.env
+): string | null {
+  const configured = env.APP_URL ?? null;
+  const deployed = env.VERCEL_URL ? `https://${env.VERCEL_URL}` : null;
+
+  if (configured && !isLoopback(configured)) {
+    return configured;
+  }
+  return deployed ?? configured;
+}
+
+export function isLoopback(origin: string): boolean {
+  try {
+    const host = new URL(origin).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Links always point at the configured app origin and Humanframe's own thread
  * id. The eve session id is never a public identifier, and an origin taken from
  * a request header would be an open redirect waiting to happen.

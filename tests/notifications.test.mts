@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createCommitment } from "../agent/lib/commitments.ts";
 import type { EmailConfig, SendResult } from "../agent/lib/email.ts";
-import { renderNotification, threadUrl } from "../agent/lib/email-template.ts";
+import { appOrigin, renderNotification, threadUrl } from "../agent/lib/email-template.ts";
 import {
   claimNotifications,
   notificationDedupeKey,
@@ -650,6 +650,21 @@ async function main(): Promise<void> {
       check("there is a settings link", rendered.html.includes("/settings/notifications"));
       check("the plain-text part carries the same link",
         rendered.text.includes(thread));
+    }
+
+    // --- 12b. The origin a link uses ----------------------------------------------
+    {
+      check("a configured origin is used as given",
+        appOrigin({ APP_URL: "https://app.humanframe.no" }) === "https://app.humanframe.no");
+      check("a deployment does not put localhost in an email",
+        appOrigin({ APP_URL: "http://localhost:3000", VERCEL_URL: "preview.vercel.app" }) ===
+          "https://preview.vercel.app");
+      check("locally, localhost is still fine",
+        appOrigin({ APP_URL: "http://localhost:3000" }) === "http://localhost:3000");
+      check("a real configured origin outranks the deployment url",
+        appOrigin({ APP_URL: "https://app.humanframe.no", VERCEL_URL: "preview.vercel.app" }) ===
+          "https://app.humanframe.no");
+      check("nothing configured anywhere yields nothing", appOrigin({}) === null);
     }
 
     // --- 13. Tenant isolation ----------------------------------------------------

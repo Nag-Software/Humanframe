@@ -7,7 +7,7 @@ import {
   type EmailConfig,
   type SendResult,
 } from "./email";
-import { renderNotification, settingsUrl, threadUrl } from "./email-template";
+import { appOrigin, renderNotification, settingsUrl, threadUrl } from "./email-template";
 import {
   claimNotifications,
   deferJob,
@@ -153,7 +153,7 @@ async function deliver(
     return { status: "skipped", jobId: job.id, reason: "not_on_allowlist" };
   }
 
-  const origin = deps.appOrigin ?? process.env.APP_URL ?? null;
+  const origin = deps.appOrigin ?? appOrigin();
   if (!origin) {
     await deferJob(client, job, lease, new Date(now.getTime() + 3_600_000), {
       reason: "no_app_origin",
