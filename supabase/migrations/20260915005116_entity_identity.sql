@@ -1,6 +1,6 @@
 -- A tenant-safe, deterministic identity for entities.
 --
--- The memory_core index was an expression index on lower(name), which PostgREST
+-- The 0006 index was an expression index on lower(name), which PostgREST
 -- cannot use as an ON CONFLICT target. A stored generated column gives the same
 -- normalisation a real constraint can point at, and the writer normalises the
 -- same way: lowercase, collapsed whitespace, trimmed. No fuzzy matching and no
@@ -17,4 +17,4 @@ alter table public.entities
   drop constraint if exists entities_identity_key;
 alter table public.entities
   add constraint entities_identity_key
-    unique (workspace_id, assistant_id, kind, normalized_name);
+    unique (workspace_id, assistant_id, kind, normalized_name);;

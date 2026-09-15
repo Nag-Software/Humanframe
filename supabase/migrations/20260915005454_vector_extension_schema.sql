@@ -52,4 +52,4 @@ as $$
 $$;
 
 revoke execute on function public.match_memories(uuid, uuid, extensions.vector, integer, real) from public, anon;
-grant execute on function public.match_memories(uuid, uuid, extensions.vector, integer, real) to authenticated;
+grant execute on function public.match_memories(uuid, uuid, extensions.vector, integer, real) to authenticated;;
