@@ -26,9 +26,12 @@ const serverSchema = z.object({
   AI_GATEWAY_API_KEY: z.string().min(1).optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
   // The memory pipeline runs on its own models: extraction can be cheaper than
-  // Maya, and embeddings are a different model entirely.
+  // Maya, and embeddings are a different model entirely. The route is
+  // configured, never inferred from the model id.
   MEMORY_MODEL: z.string().default("openai/gpt-5-mini"),
-  EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
+  MEMORY_MODEL_PROVIDER: z.enum(["gateway", "openai"]).default("gateway"),
+  EMBEDDING_MODEL: z.string().default("openai/text-embedding-3-small"),
+  EMBEDDING_PROVIDER: z.enum(["gateway", "openai"]).default("gateway"),
 });
 
 export const publicEnv = publicSchema.parse({

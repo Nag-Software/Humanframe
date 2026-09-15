@@ -6,5 +6,5 @@ export default defineAgent({
   defaultTools: false,
   // Gateway model id: Vercel OIDC in preview and production, AI_GATEWAY_API_KEY
   // as the local fallback. Change it with `eve set --model <id>`.
-  model: "inclusionai/ling-3.0-flash-fin",
+  model: "openai/gpt-5-nano",
 });

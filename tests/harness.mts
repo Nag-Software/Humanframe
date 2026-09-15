@@ -16,6 +16,14 @@ export function loadEnv(path = ".env.local"): Record<string, string> {
       env[match[1]] = match[2].replace(/^["']|["']$/g, "");
     }
   }
+
+  // Code under test reads process.env directly (model routing, credentials),
+  // so the file's values have to be visible there too. Anything already set in
+  // the real environment wins.
+  for (const [key, value] of Object.entries(env)) {
+    process.env[key] ??= value;
+  }
+
   return { ...env, ...process.env } as Record<string, string>;
 }
 

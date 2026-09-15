@@ -59,11 +59,25 @@ export type DecisionRow = {
   source_message_id: string | null;
 };
 
+/**
+ * Test seam. The deterministic suite substitutes a pure function here so it can
+ * exercise the write path without a model call; production never sets it.
+ */
+let embedderOverride: ((text: string) => Promise<number[]>) | null = null;
+
+export function setEmbedderForTests(
+  embedder: ((text: string) => Promise<number[]>) | null
+): void {
+  embedderOverride = embedder;
+}
+
 export async function embedText(text: string): Promise<number[]> {
-  const { embedding } = await embed({
-    model: embeddingModel(),
-    value: text.slice(0, 8000),
-  });
+  const value = text.slice(0, 8000);
+  if (embedderOverride) {
+    return embedderOverride(value);
+  }
+
+  const { embedding } = await embed({ model: embeddingModel(), value });
   return embedding;
 }
 

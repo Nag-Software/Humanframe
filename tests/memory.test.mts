@@ -15,6 +15,7 @@ import {
 import {
   memoryScore,
   rankMemories,
+  setEmbedderForTests,
   type MemoryRow,
   type MemoryScope,
 } from "../agent/lib/memory-store.ts";
@@ -91,6 +92,16 @@ async function insertMemory(
     .select("id")
     .maybeSingle<{ id: string }>();
 }
+
+// No model calls: embeddings are a deterministic function of the text, so the
+// write path is exercised without leaving the machine.
+setEmbedderForTests(async (text) => {
+  let hash = 0;
+  for (const character of text) {
+    hash = (hash * 31 + character.charCodeAt(0)) % 1536;
+  }
+  return unitVector(hash);
+});
 
 const alice = await createTestWorkspace("a");
 const bob = await createTestWorkspace("b");
@@ -297,6 +308,7 @@ try {
     const first: Candidate = {
       kind: "preference",
       subject: null,
+      subjectKind: null,
       attribute: "response length",
       value: "short answers",
       confidence: 0.9,
@@ -343,6 +355,7 @@ try {
     const candidate: Candidate = {
       kind: "fact",
       subject: null,
+      subjectKind: null,
       attribute: "employer",
       value: "Nag Software",
       confidence: 0.9,
@@ -371,6 +384,7 @@ try {
         {
           kind: "fact",
           subject: null,
+          subjectKind: null,
           attribute: "maybe",
           value: "unsure",
           confidence: 0.2,
@@ -386,6 +400,7 @@ try {
     const base: Candidate = {
       kind: "fact",
       subject: null,
+      subjectKind: null,
       attribute: "Employer",
       value: "Nag Software",
       confidence: 0.9,
@@ -399,6 +414,215 @@ try {
       dedupeKey(base) !== dedupeKey({ ...base, subject: "Ada" }),
       "different subjects share a dedupe key"
     );
+  });
+
+
+  // -------------------------------------------------------------- entities
+
+  await test("a subject becomes one entity, however often it is mentioned", async () => {
+    const scope = scopeFor(alice);
+    const candidate: Candidate = {
+      kind: "fact",
+      subject: "Nag Software",
+      subjectKind: "company",
+      attribute: "role",
+      value: "The user's own company",
+      confidence: 0.9,
+      importance: 0.7,
+    };
+    const source = {
+      threadId: null,
+      messageId: null,
+      occurredAt: new Date().toISOString(),
+    };
+
+    await storeCandidates(scope, [candidate], source);
+    // Same subject, different spacing and casing: still one entity.
+    await storeCandidates(
+      scope,
+      [{ ...candidate, subject: "  nag   SOFTWARE ", value: "Same company" }],
+      source
+    );
+
+    const { data } = await alice.userClient
+      .from("entities")
+      .select("id, name, normalized_name, kind")
+      .eq("kind", "company")
+      .returns<
+        { id: string; name: string; normalized_name: string; kind: string }[]
+      >();
+
+    const nag = (data ?? []).filter((row) =>
+      row.normalized_name.includes("nag software")
+    );
+    assert(nag.length === 1, `expected one entity, got ${nag.length}`);
+    assert(
+      nag[0].normalized_name === "nag software",
+      `normalisation is wrong: "${nag[0].normalized_name}"`
+    );
+  });
+
+  await test("the same name under a different kind is a different entity", async () => {
+    const scope = scopeFor(alice);
+    const source = {
+      threadId: null,
+      messageId: null,
+      occurredAt: new Date().toISOString(),
+    };
+
+    await storeCandidates(
+      scope,
+      [
+        {
+          kind: "fact",
+          subject: "Atlas",
+          subjectKind: "project",
+          attribute: "status",
+          value: "In progress",
+          confidence: 0.8,
+          importance: 0.6,
+        },
+        {
+          kind: "fact",
+          subject: "Atlas",
+          subjectKind: "person",
+          attribute: "role",
+          value: "Designer",
+          confidence: 0.8,
+          importance: 0.6,
+        },
+      ],
+      source
+    );
+
+    const { data } = await alice.userClient
+      .from("entities")
+      .select("kind")
+      .eq("normalized_name", "atlas")
+      .returns<{ kind: string }[]>();
+
+    assert((data ?? []).length === 2, `expected 2 entities, got ${(data ?? []).length}`);
+  });
+
+  await test("facts about an entity hang off that entity", async () => {
+    const { data: entity } = await alice.userClient
+      .from("entities")
+      .select("id")
+      .eq("normalized_name", "nag software")
+      .eq("assistant_id", alice.assistantId)
+      .maybeSingle<{ id: string }>();
+
+    assert(entity !== null, "the company entity is missing");
+
+    const { data: facts } = await alice.userClient
+      .from("facts")
+      .select("id, subject_entity_id, status")
+      .eq("subject_entity_id", entity!.id)
+      .eq("status", "active")
+      .returns<{ id: string }[]>();
+
+    assert((facts ?? []).length >= 1, "no fact is attached to the entity");
+  });
+
+  await test("episodes link to their entity exactly once", async () => {
+    const scope = scopeFor(alice);
+    const candidate: Candidate = {
+      kind: "episode",
+      subject: "Ada Lovelace",
+      subjectKind: "person",
+      attribute: "meeting",
+      value: "Reviewed the roadmap together",
+      confidence: 0.8,
+      importance: 0.6,
+    };
+    const source = {
+      threadId: null,
+      messageId: null,
+      occurredAt: new Date().toISOString(),
+    };
+
+    await storeCandidates(scope, [candidate], source);
+    await storeCandidates(scope, [candidate], source);
+
+    const { data: entity } = await alice.userClient
+      .from("entities")
+      .select("id")
+      .eq("normalized_name", "ada lovelace")
+      .maybeSingle<{ id: string }>();
+    assert(entity !== null, "the person entity is missing");
+
+    const { data: links } = await alice.userClient
+      .from("memory_entities")
+      .select("memory_id, entity_id")
+      .eq("entity_id", entity!.id);
+
+    assert(
+      (links ?? []).length === 1,
+      `expected one link, got ${(links ?? []).length}`
+    );
+  });
+
+  await test("a second assistant keeps its own entities", async () => {
+    const { data: second } = await admin
+      .from("assistants")
+      .insert({
+        workspace_id: alice.workspaceId,
+        slug: "atlas",
+        name: "Atlas",
+        role: "Analyst",
+      })
+      .select("id")
+      .maybeSingle<{ id: string }>();
+
+    assert(second !== null, "could not create a second assistant");
+
+    await storeCandidates(
+      {
+        client: alice.userClient,
+        workspaceId: alice.workspaceId,
+        assistantId: second!.id,
+        userId: alice.userId,
+      },
+      [
+        {
+          kind: "fact",
+          subject: "Nag Software",
+          subjectKind: "company",
+          attribute: "role",
+          value: "Client of the second assistant",
+          confidence: 0.9,
+          importance: 0.6,
+        },
+      ],
+      { threadId: null, messageId: null, occurredAt: new Date().toISOString() }
+    );
+
+    const { data } = await alice.userClient
+      .from("entities")
+      .select("id, assistant_id")
+      .eq("normalized_name", "nag software")
+      .returns<{ id: string; assistant_id: string }[]>();
+
+    assert(
+      (data ?? []).length === 2,
+      `each assistant should own its entity row; got ${(data ?? []).length}`
+    );
+  });
+
+  await test("entities do not cross workspaces", async () => {
+    const { data: leaked } = await bob.userClient.from("entities").select("id");
+    assert(
+      (leaked ?? []).length === 0,
+      `workspace B read ${(leaked ?? []).length} entities from workspace A`
+    );
+
+    const forged = await bob.userClient.from("entities").insert({
+      workspace_id: alice.workspaceId,
+      assistant_id: alice.assistantId,
+      kind: "company",
+      name: "Forged",
+    });
+    assert(forged.error !== null, "workspace B wrote an entity into workspace A");
   });
 
   // ------------------------------------------------------- context package

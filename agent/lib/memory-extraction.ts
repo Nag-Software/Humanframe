@@ -2,7 +2,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 
 import { embedText, type MemoryScope } from "./memory-store";
-import { memoryModel } from "./models";
+import { memoryModel, normalizeEntityName } from "./models";
 
 /**
  * Turns a finished exchange into durable memory.
@@ -23,6 +23,10 @@ const candidateSchema = z.object({
           .max(120)
           .nullable()
           .describe("Person, company or project this is about, or null"),
+        subjectKind: z
+          .enum(["person", "company", "project", "place", "other"])
+          .nullable()
+          .describe("What the subject is, or null when there is no subject"),
         attribute: z
           .string()
           .max(120)
@@ -76,6 +80,7 @@ export type StoreResult = {
   stored: number;
   superseded: number;
   skipped: number;
+  entities: number;
 };
 
 export async function storeCandidates(
@@ -83,7 +88,7 @@ export async function storeCandidates(
   candidates: Candidate[],
   source: { threadId: string | null; messageId: string | null; occurredAt: string }
 ): Promise<StoreResult> {
-  const result: StoreResult = { stored: 0, superseded: 0, skipped: 0 };
+  const result: StoreResult = { stored: 0, superseded: 0, skipped: 0, entities: 0 };
 
   for (const candidate of candidates) {
     if (candidate.confidence < 0.4) {
@@ -91,12 +96,17 @@ export async function storeCandidates(
       continue;
     }
 
+    const entityId = await upsertEntity(scope, candidate, source);
+    if (entityId) {
+      result.entities += 1;
+    }
+
     if (
       candidate.kind === "fact" ||
       candidate.kind === "preference" ||
       candidate.kind === "profile"
     ) {
-      const superseded = await upsertFact(scope, candidate, source);
+      const superseded = await upsertFact(scope, candidate, source, entityId);
       result.stored += 1;
       result.superseded += superseded ? 1 : 0;
       continue;
@@ -108,11 +118,79 @@ export async function storeCandidates(
       continue;
     }
 
-    await upsertMemory(scope, candidate, source);
+    const memoryId = await upsertMemory(scope, candidate, source);
+    await linkMemoryToEntity(scope, memoryId, entityId);
     result.stored += 1;
   }
 
   return result;
+}
+
+/**
+ * Upserts the person, company or project a candidate is about.
+ *
+ * Identity is (workspace, assistant, kind, normalized name) — the same key the
+ * database enforces — so the same subject named twice lands on one row. Names
+ * are normalised deterministically and never matched fuzzily: "Ada L." and
+ * "Ada Lovelace" stay two entities until someone decides they are one.
+ */
+async function upsertEntity(
+  scope: MemoryScope,
+  candidate: Candidate,
+  source: { threadId: string | null; messageId: string | null }
+): Promise<string | null> {
+  // Collapse whitespace but keep the user's capitalisation: the display name
+  // stays human, while normalized_name carries identity.
+  const name = candidate.subject?.replace(/\s+/g, " ").trim();
+  if (!name || normalizeEntityName(name).length === 0) {
+    return null;
+  }
+
+  const kind = candidate.subjectKind ?? "other";
+
+  const { data, error } = await scope.client
+    .from("entities")
+    .upsert(
+      {
+        workspace_id: scope.workspaceId,
+        assistant_id: scope.assistantId,
+        kind,
+        name,
+        importance: candidate.importance,
+        source_thread_id: source.threadId,
+        source_message_id: source.messageId,
+      },
+      {
+        onConflict: "workspace_id,assistant_id,kind,normalized_name",
+        ignoreDuplicates: false,
+      }
+    )
+    .select("id")
+    .maybeSingle<{ id: string }>();
+
+  if (error) {
+    throw new Error(`entity write failed: ${error.message}`);
+  }
+
+  return data?.id ?? null;
+}
+
+/** The join is a primary key, so re-linking the same pair changes nothing. */
+async function linkMemoryToEntity(
+  scope: MemoryScope,
+  memoryId: string | null,
+  entityId: string | null
+): Promise<void> {
+  if (!memoryId || !entityId) {
+    return;
+  }
+
+  await scope.client
+    .from("memory_entities")
+    .upsert(
+      { memory_id: memoryId, entity_id: entityId },
+      { onConflict: "memory_id,entity_id", ignoreDuplicates: true }
+    );
 }
 
 /**
@@ -123,21 +201,25 @@ export async function storeCandidates(
 async function upsertFact(
   scope: MemoryScope,
   candidate: Candidate,
-  source: { threadId: string | null; messageId: string | null }
+  source: { threadId: string | null; messageId: string | null },
+  entityId: string | null
 ): Promise<boolean> {
   const kind = candidate.kind as "fact" | "preference" | "profile";
   const attribute = candidate.attribute.trim();
 
-  const { data: existing } = await scope.client
+  const existingQuery = scope.client
     .from("facts")
     .select("id, value")
     .eq("workspace_id", scope.workspaceId)
     .eq("assistant_id", scope.assistantId)
     .eq("kind", kind)
     .eq("status", "active")
-    .ilike("attribute", attribute)
-    .is("subject_entity_id", null)
-    .maybeSingle<{ id: string; value: string }>();
+    .ilike("attribute", attribute);
+
+  const { data: existing } = await (entityId
+    ? existingQuery.eq("subject_entity_id", entityId)
+    : existingQuery.is("subject_entity_id", null)
+  ).maybeSingle<{ id: string; value: string }>();
 
   if (existing && existing.value.trim() === candidate.value.trim()) {
     // Same statement again: refresh confidence, create nothing.
@@ -166,6 +248,7 @@ async function upsertFact(
       kind,
       attribute,
       value: candidate.value.trim(),
+      subject_entity_id: entityId,
       confidence: candidate.confidence,
       importance: candidate.importance,
       source_thread_id: source.threadId,
@@ -210,14 +293,14 @@ async function upsertMemory(
   scope: MemoryScope,
   candidate: Candidate,
   source: { threadId: string | null; messageId: string | null; occurredAt: string }
-): Promise<void> {
+): Promise<string | null> {
   const content = candidate.subject
     ? `${candidate.subject} — ${candidate.attribute}: ${candidate.value}`
     : `${candidate.attribute}: ${candidate.value}`;
 
   const embedding = await embedText(content);
 
-  await scope.client.from("memories").upsert(
+  const { data } = await scope.client.from("memories").upsert(
     {
       workspace_id: scope.workspaceId,
       assistant_id: scope.assistantId,
@@ -233,7 +316,11 @@ async function upsertMemory(
       occurred_at: source.occurredAt,
     },
     { onConflict: "workspace_id,assistant_id,dedupe_key" }
-  );
+  )
+    .select("id")
+    .maybeSingle<{ id: string }>();
+
+  return data?.id ?? null;
 }
 
 /**
