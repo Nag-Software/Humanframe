@@ -1,5 +1,6 @@
 allowBuilds:
-  esbuild: set this to true or false
+  # esbuild's postinstall links the platform binary that tsx runs on.
+  esbuild: true
   sharp: false
   unrs-resolver: false
 minimumReleaseAgeExclude:
