@@ -43,11 +43,7 @@ export const en = {
     maya: "Maya",
     routineTasks: "Routine tasks",
     calendar: "Calendar",
-    settings: "Settings",
-    general: "General",
-    team: "Team",
     billing: "Billing",
-    limits: "Limits",
     account: "Account",
     notifications: "Notifications",
     upgrade: "Upgrade to Pro",
@@ -83,33 +79,6 @@ export const en = {
   settings: {
     title: "Settings",
     description: "Manage your account and workspace.",
-    pages: {
-      general: {
-        metaTitle: "General · Settings",
-        title: "General",
-        description: "Name, language, and workspace defaults.",
-      },
-      notifications: {
-        metaTitle: "Notifications · Settings",
-        title: "Notifications",
-        description: "Maya only emails you if you turn this on.",
-      },
-      team: {
-        metaTitle: "Team · Settings",
-        title: "Team",
-        description: "Members and access.",
-      },
-      billing: {
-        metaTitle: "Billing · Settings",
-        title: "Billing",
-        description: "Subscription, receipts, and payment method.",
-      },
-      limits: {
-        metaTitle: "Limits · Settings",
-        title: "Limits",
-        description: "Usage and limits per assistant.",
-      },
-    },
     upgrade: {
       description: "Unlock higher limits and extra assistants.",
       current: "Current plan",
@@ -132,19 +101,7 @@ export const en = {
       invoices: "Invoices",
     },
     notifications: {
-      description: "Choose what we email you about.",
-      product: {
-        title: "Product updates",
-        description: "New features and improvements.",
-      },
-      billingAlerts: {
-        title: "Billing",
-        description: "Receipts and plan changes.",
-      },
-      mentions: {
-        title: "Mentions",
-        description: "When someone needs your attention.",
-      },
+      description: "Maya only emails you if you turn this on.",
       form: {
         emailTitle: "Email notifications",
         emailDescription: "Sent to the address you're signed in with.",
@@ -299,11 +256,7 @@ export const no: Dictionary = {
     maya: "Maya",
     routineTasks: "Rutineoppgaver",
     calendar: "Kalender",
-    settings: "Innstillinger",
-    general: "Generelt",
-    team: "Team",
     billing: "Fakturering",
-    limits: "Grenser",
     account: "Konto",
     notifications: "Varsler",
     upgrade: "Oppgrader til Pro",
@@ -339,33 +292,6 @@ export const no: Dictionary = {
   settings: {
     title: "Innstillinger",
     description: "Administrer kontoen og arbeidsområdet ditt.",
-    pages: {
-      general: {
-        metaTitle: "Generelt · Innstillinger",
-        title: "Generelt",
-        description: "Navn, språk og standardvalg for arbeidsområdet.",
-      },
-      notifications: {
-        metaTitle: "Varsler · Innstillinger",
-        title: "Varsler",
-        description: "Maya sender e-post bare hvis du slår det på.",
-      },
-      team: {
-        metaTitle: "Team · Innstillinger",
-        title: "Team",
-        description: "Medlemmer og tilganger.",
-      },
-      billing: {
-        metaTitle: "Fakturering · Innstillinger",
-        title: "Fakturering",
-        description: "Abonnement, kvittering og betalingsmåte.",
-      },
-      limits: {
-        metaTitle: "Grenser · Innstillinger",
-        title: "Grenser",
-        description: "Bruk og grenser per assistent.",
-      },
-    },
     upgrade: {
       description: "Lås opp høyere grenser og flere assistenter.",
       current: "Nåværende plan",
@@ -388,19 +314,7 @@ export const no: Dictionary = {
       invoices: "Kvitteringer",
     },
     notifications: {
-      description: "Velg hva vi sender deg på e-post.",
-      product: {
-        title: "Produktoppdateringer",
-        description: "Nye funksjoner og forbedringer.",
-      },
-      billingAlerts: {
-        title: "Fakturering",
-        description: "Kvitteringer og planendringer.",
-      },
-      mentions: {
-        title: "Omtaler",
-        description: "Når noen trenger oppmerksomheten din.",
-      },
+      description: "Maya sender e-post bare hvis du slår det på.",
       form: {
         emailTitle: "E-postvarsling",
         emailDescription: "Sendes til adressen du er logget inn med.",

@@ -5,12 +5,12 @@ import {
   BadgeCheckIcon,
   BellIcon,
   CreditCardIcon,
-  InfoIcon,
   SparklesIcon,
 } from "lucide-react"
 
 import { useTranslations } from "@/components/i18n-provider"
 import { LanguageSwitcher } from "@/components/language-switcher"
+import { NotificationSettingsForm } from "@/components/notification-settings-form"
 import { PageSkeleton } from "@/components/page-skeleton"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -38,14 +38,8 @@ import {
   SidebarProvider,
   SidebarSeparator,
 } from "@/components/ui/sidebar"
-import { Switch } from "@/components/ui/switch"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import type { Dictionary } from "@/lib/i18n/dictionaries"
+import type { NotificationSettingsValues } from "@/lib/settings/notification-settings"
 import { DEFAULT_PLAN, type PlanId } from "@/lib/subscription"
 
 export const SETTINGS_TABS = [
@@ -62,6 +56,14 @@ export const SETTINGS_NAV = [
   { items: [SETTINGS_TABS[1], SETTINGS_TABS[2], SETTINGS_TABS[3]] },
 ] as const
 
+export const SETTINGS_QUERY = "settings"
+
+export function isSettingsTabId(
+  value: string | null | undefined
+): value is SettingsTabId {
+  return SETTINGS_TABS.some((item) => item.id === value)
+}
+
 export type SettingsUser = {
   name: string
   email: string
@@ -75,6 +77,7 @@ export function SettingsDialog({
   onTabChange,
   user,
   plan = DEFAULT_PLAN,
+  notificationSettings,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -82,6 +85,7 @@ export function SettingsDialog({
   onTabChange: (tab: SettingsTabId) => void
   user: SettingsUser
   plan?: PlanId
+  notificationSettings: NotificationSettingsValues
 }) {
   const t = useTranslations()
   const activeTab = SETTINGS_TABS.find((item) => item.id === tab) ?? SETTINGS_TABS[0]
@@ -90,7 +94,7 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => onOpenChange(nextOpen)}>
-      <DialogContent className="overflow-hidden p-0 md:max-h-[500px] md:max-w-[700px] lg:max-w-[800px]">
+      <DialogContent className="overflow-hidden p-0 md:max-h-[min(720px,85vh)] md:max-w-[700px] lg:max-w-[800px]">
         <DialogTitle className="sr-only">{t.settings.title}</DialogTitle>
         <DialogDescription className="sr-only">
           {t.settings.description}
@@ -127,7 +131,7 @@ export function SettingsDialog({
               </SidebarGroup>
             </SidebarContent>
           </Sidebar>
-          <main className="flex h-[480px] flex-1 flex-col overflow-hidden">
+          <main className="flex h-[min(640px,85vh)] flex-1 flex-col overflow-hidden">
             <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
               <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto px-4 md:overflow-visible">
                 <div className="flex gap-1 md:hidden">
@@ -172,6 +176,7 @@ export function SettingsDialog({
                 user={user}
                 plan={plan}
                 t={t}
+                notificationSettings={notificationSettings}
               />
             </div>
           </main>
@@ -186,11 +191,13 @@ function SettingsTabContent({
   user,
   plan,
   t,
+  notificationSettings,
 }: {
   tab: SettingsTabId
   user: SettingsUser
   plan: PlanId
   t: Dictionary
+  notificationSettings: NotificationSettingsValues
 }) {
   if (tab === "upgrade") {
     return <UpgradePanel plan={plan} t={t} />
@@ -201,7 +208,13 @@ function SettingsTabContent({
   if (tab === "billing") {
     return <BillingPanel plan={plan} t={t} />
   }
-  return <NotificationsPanel t={t} />
+  return (
+    <NotificationsPanel
+      t={t}
+      settings={notificationSettings}
+      email={user.email}
+    />
+  )
 }
 
 function UpgradePanel({ plan, t }: { plan: PlanId; t: Dictionary }) {
@@ -293,43 +306,21 @@ function BillingPanel({ plan, t }: { plan: PlanId; t: Dictionary }) {
   )
 }
 
-function NotificationsPanel({ t }: { t: Dictionary }) {
+function NotificationsPanel({
+  t,
+  settings,
+  email,
+}: {
+  t: Dictionary
+  settings: NotificationSettingsValues
+  email: string
+}) {
   const copy = t.settings.notifications
-  const items = [
-    { id: "product", defaultChecked: false, ...copy.product },
-    { id: "billing", defaultChecked: true, ...copy.billingAlerts },
-    { id: "mentions", defaultChecked: false, ...copy.mentions },
-  ]
 
   return (
     <section className="flex flex-col gap-4">
       <TabIntro title={t.nav.notifications} description={copy.description} />
-      <TooltipProvider delay={0}>
-        <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60">
-          {items.map((item) => (
-            <li key={item.id} className="flex h-10 items-center gap-1.5 px-3">
-              <p className="truncate text-sm font-medium">{item.title}</p>
-              <Tooltip>
-                <TooltipTrigger
-                  delay={0}
-                  className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
-                  aria-label={item.description}
-                >
-                  <InfoIcon className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipContent className="z-[60]" side="top">
-                  {item.description}
-                </TooltipContent>
-              </Tooltip>
-              <Switch
-                className="ml-auto"
-                defaultChecked={item.defaultChecked}
-                aria-label={item.title}
-              />
-            </li>
-          ))}
-        </ul>
-      </TooltipProvider>
+      <NotificationSettingsForm settings={settings} email={email} />
     </section>
   )
 }

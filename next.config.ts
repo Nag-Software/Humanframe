@@ -8,6 +8,30 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/assistants/maya/call/start": ["./agent/instructions.md"],
   },
+  async redirects() {
+    return [
+      {
+        source: "/settings/notifications",
+        destination: "/?settings=notifications",
+        permanent: false,
+      },
+      {
+        source: "/settings/billing",
+        destination: "/?settings=billing",
+        permanent: false,
+      },
+      {
+        source: "/settings",
+        destination: "/?settings=account",
+        permanent: false,
+      },
+      {
+        source: "/settings/:path*",
+        destination: "/?settings=account",
+        permanent: false,
+      },
+    ];
+  },
 };
 
 // Mounts the eve agent in `agent/` on this app's origin under /eve/v1/*, and

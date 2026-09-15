@@ -74,6 +74,6 @@ export async function saveNotificationSettings(
     return { ok: false, message: copy.saveFailed };
   }
 
-  revalidatePath("/settings/notifications");
+  revalidatePath("/", "layout");
   return { ok: true, message: copy.saved };
 }

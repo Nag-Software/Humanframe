@@ -27,14 +27,18 @@ import { ChevronsUpDownIcon, LogOutIcon } from "lucide-react"
 import { useTranslations } from "@/components/i18n-provider"
 import {
   SETTINGS_NAV,
+  SETTINGS_QUERY,
   SettingsDialog,
+  isSettingsTabId,
   type SettingsTabId,
 } from "@/components/settings-dialog"
+import type { NotificationSettingsValues } from "@/lib/settings/notification-settings"
 import { DEFAULT_PLAN, type PlanId } from "@/lib/subscription"
 
 export function NavUser({
   user,
   plan = DEFAULT_PLAN,
+  notificationSettings,
 }: {
   user: {
     name: string
@@ -42,12 +46,31 @@ export function NavUser({
     avatar: string
   }
   plan?: PlanId
+  notificationSettings: NotificationSettingsValues
 }) {
   const { isMobile } = useSidebar()
   const t = useTranslations()
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [settingsTab, setSettingsTab] =
     React.useState<SettingsTabId>("account")
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const tab = params.get(SETTINGS_QUERY)
+    if (!isSettingsTabId(tab)) {
+      return
+    }
+    // Query is only readable after hydration; opening during render would
+    // mismatch the server HTML.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL after mount
+    setSettingsTab(tab)
+    setSettingsOpen(true)
+    params.delete(SETTINGS_QUERY)
+    const query = params.toString()
+    const next = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`
+    window.history.replaceState(null, "", next)
+  }, [])
+
   const initials = (user.name || user.email || "?")
     .split(/[\s@.]+/)
     .filter(Boolean)
@@ -141,6 +164,7 @@ export function NavUser({
         onTabChange={setSettingsTab}
         user={user}
         plan={plan}
+        notificationSettings={notificationSettings}
       />
     </>
   )

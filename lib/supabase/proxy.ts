@@ -51,16 +51,20 @@ export async function updateSession(request: NextRequest) {
 
   if (!user && !isPublicPath(request.nextUrl.pathname)) {
     const url = request.nextUrl.clone();
+    const next = `${request.nextUrl.pathname}${request.nextUrl.search}`;
     url.pathname = "/login";
-    url.searchParams.set("next", request.nextUrl.pathname);
+    url.search = "";
+    url.searchParams.set("next", next);
     return NextResponse.redirect(url);
   }
 
   if (user && request.nextUrl.pathname === "/login") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/assistants/maya";
-    url.search = "";
-    return NextResponse.redirect(url);
+    const rawNext = request.nextUrl.searchParams.get("next");
+    const next =
+      rawNext?.startsWith("/") && !rawNext.startsWith("//")
+        ? rawNext
+        : "/assistants/maya";
+    return NextResponse.redirect(new URL(next, request.nextUrl.origin));
   }
 
   return response;

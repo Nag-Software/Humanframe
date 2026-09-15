@@ -65,6 +65,21 @@ export function useCall(options: { threadId: string | null }): UseCall {
   const callId = useRef<string | null>(null);
   /** Turns already relayed, so a repeated provider event is not sent twice. */
   const relayed = useRef<Set<string>>(new Set());
+  /**
+   * Which attempt owns the call right now.
+   *
+   * `start` is async and can be entered twice before React re-renders — Strict
+   * Mode double-invokes the mount effect, and a retry can land on top of a
+   * connection that is still opening. React state cannot guard that: both
+   * entries close over the same stale `status`. A ref changes synchronously,
+   * so the second entry is visible to the first the moment it happens.
+   *
+   * Every attempt captures its generation and re-checks it after each await.
+   * An attempt that no longer owns the call disposes whatever it just built
+   * instead of leaving a live peer connection nobody holds a reference to —
+   * which is a call that keeps talking and can never be hung up.
+   */
+  const generation = useRef(0);
 
   /** Releases every resource. Safe to call repeatedly. */
   const teardown = useCallback(() => {
@@ -109,6 +124,9 @@ export function useCall(options: { threadId: string | null }): UseCall {
   );
 
   const hangUp = useCallback(() => {
+    // Retire the current attempt first: a start still in flight now fails its
+    // ownership check and disposes itself instead of connecting behind us.
+    generation.current += 1;
     setStatus("ending");
     teardown();
     void report("hangup").finally(() => setStatus("idle"));
@@ -185,9 +203,16 @@ export function useCall(options: { threadId: string | null }): UseCall {
   }, []);
 
   const start = useCallback(async () => {
-    if (status !== "idle" && status !== "error") {
-      return;
-    }
+    // Synchronous, before the first await: two entries can never both proceed.
+    const attempt = generation.current + 1;
+    generation.current = attempt;
+    const owns = () => generation.current === attempt;
+
+    // Anything a previous attempt left behind is released before this one
+    // opens a microphone of its own.
+    teardown();
+    await report("hangup");
+    if (!owns()) return;
 
     setError(null);
     setErrorMessage(null);
@@ -212,6 +237,12 @@ export function useCall(options: { threadId: string | null }): UseCall {
       return;
     }
 
+    if (!owns()) {
+      // Someone else started while the permission prompt was open.
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+
     microphone.current = stream;
     setStatus("connecting");
 
@@ -223,9 +254,14 @@ export function useCall(options: { threadId: string | null }): UseCall {
         connection.addTrack(track, stream);
       }
 
-      // Maya's voice. Created here rather than in the tree so teardown owns it.
+      // Maya's voice. Created here rather than in the tree so teardown owns
+      // it, but attached to the document: a detached element is not reliably
+      // tracked by the browser's echo canceller, and an element the canceller
+      // cannot see is an element she hears herself through.
       const element = document.createElement("audio");
       element.autoplay = true;
+      element.hidden = true;
+      document.body.append(element);
       audio.current = element;
       connection.ontrack = (event) => {
         element.srcObject = event.streams[0];
@@ -238,6 +274,8 @@ export function useCall(options: { threadId: string | null }): UseCall {
       });
 
       connection.onconnectionstatechange = () => {
+        // A superseded attempt's connection must not drive the UI.
+        if (!owns()) return;
         const state = connection.connectionState;
         if (state === "connected") {
           setStatus("connected");
@@ -253,6 +291,10 @@ export function useCall(options: { threadId: string | null }): UseCall {
 
       const offer = await connection.createOffer();
       await connection.setLocalDescription(offer);
+      if (!owns()) {
+        connection.close();
+        return;
+      }
 
       const response = await fetch("/api/assistants/maya/call/start", {
         method: "POST",
@@ -279,6 +321,17 @@ export function useCall(options: { threadId: string | null }): UseCall {
       }
 
       const body = (await response.json()) as StartResponse;
+
+      if (!owns()) {
+        // The call exists on the server now, so it has to be ended there as
+        // well as closed here — otherwise it holds the concurrency slot until
+        // the sweep.
+        connection.close();
+        callId.current = body.callSessionId;
+        void report("navigation");
+        return;
+      }
+
       callId.current = body.callSessionId;
       setThreadId(body.threadId);
 
@@ -286,6 +339,10 @@ export function useCall(options: { threadId: string | null }): UseCall {
         type: "answer",
         sdp: body.answerSdp,
       });
+      if (!owns()) {
+        teardown();
+        void report("navigation");
+      }
     } catch {
       teardown();
       setError("unknown");
@@ -293,8 +350,7 @@ export function useCall(options: { threadId: string | null }): UseCall {
       setStatus("error");
       void report("error");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options.threadId, report, status, teardown]);
+  }, [handleEvent, options.threadId, report, teardown]);
 
 
   const toggleMute = useCallback(() => {
@@ -310,8 +366,9 @@ export function useCall(options: { threadId: string | null }): UseCall {
   // the microphone. Without this the browser keeps recording.
   useEffect(() => {
     const onHide = () => {
+      generation.current += 1;
+      teardown();
       if (callId.current) {
-        teardown();
         void report("navigation");
       }
     };

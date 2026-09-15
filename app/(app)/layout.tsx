@@ -6,11 +6,13 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { loadNotificationSettings } from "@/lib/settings/notification-settings";
 import { requireRequestScope } from "@/server/db/request-scope";
 import { Analytics } from "@vercel/analytics/next";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const scope = await requireRequestScope();
+  const notificationSettings = await loadNotificationSettings(scope);
 
   return (
     <>
@@ -23,6 +25,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             avatar: "",
           }}
           plan={scope.workspace.plan}
+          notificationSettings={notificationSettings}
         />
         <SidebarInset>
           <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">

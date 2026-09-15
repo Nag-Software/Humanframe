@@ -166,7 +166,7 @@ export function threadUrl(origin: string, threadId: string): string {
 }
 
 export function settingsUrl(origin: string): string {
-  return `${trimSlash(origin)}/settings/notifications`;
+  return `${trimSlash(origin)}/?settings=notifications`;
 }
 
 function trimSlash(origin: string): string {

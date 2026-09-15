@@ -18,12 +18,6 @@ const SEGMENT_KEYS = {
   maya: "maya",
   "routine-tasks": "routineTasks",
   calendar: "calendar",
-  settings: "settings",
-  general: "general",
-  team: "team",
-  billing: "billing",
-  limits: "limits",
-  notifications: "notifications",
 } as const satisfies Record<string, keyof Dictionary["nav"]>;
 
 function labelFor(segment: string, nav: Dictionary["nav"]) {

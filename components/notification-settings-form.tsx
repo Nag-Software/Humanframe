@@ -7,18 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { formatMessage } from "@/lib/i18n/dictionaries";
-
-import { saveNotificationSettings, type NotificationFormState } from "./actions";
-
-export type NotificationSettingsValues = {
-  emailEnabled: boolean;
-  reminders: boolean;
-  backgroundDone: boolean;
-  approvalNeeded: boolean;
-  quietHoursStart: string;
-  quietHoursEnd: string;
-  timezone: string;
-};
+import {
+  saveNotificationSettings,
+  type NotificationFormState,
+} from "@/lib/settings/notification-actions";
+import type { NotificationSettingsValues } from "@/lib/settings/notification-settings";
 
 const INITIAL: NotificationFormState = { ok: true };
 
@@ -47,7 +40,7 @@ export function NotificationSettingsForm({
       : "UTC";
 
   return (
-    <form action={action} className="max-w-xl space-y-8">
+    <form action={action} className="space-y-6">
       <Row
         name="emailEnabled"
         title={copy.emailTitle}
@@ -62,7 +55,7 @@ export function NotificationSettingsForm({
 
       <fieldset
         disabled={!emailEnabled}
-        className="space-y-6 transition-opacity disabled:opacity-50"
+        className="space-y-5 transition-opacity disabled:opacity-50"
       >
         <Row
           name="reminders"
@@ -134,7 +127,9 @@ export function NotificationSettingsForm({
         {state.message ? (
           <p
             className={
-              state.ok ? "text-muted-foreground text-sm" : "text-destructive text-sm"
+              state.ok
+                ? "text-muted-foreground text-sm"
+                : "text-destructive text-sm"
             }
           >
             {state.message}

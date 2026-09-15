@@ -637,7 +637,7 @@ async function main(): Promise<void> {
         event: "approval_needed",
         title: 'Send invoice to <script>alert("x")</script> Acme',
         threadUrl: threadUrl("https://app.test/", thread),
-        settingsUrl: "https://app.test/settings/notifications",
+        settingsUrl: "https://app.test/?settings=notifications",
       });
       check("the subject says what happened without the content",
         rendered.subject === "Maya needs your approval", rendered.subject);
@@ -647,7 +647,7 @@ async function main(): Promise<void> {
         rendered.html.includes(`?t=${thread}`));
       check("the link uses the configured origin, not a request header",
         rendered.html.includes("https://app.test/assistants/maya"));
-      check("there is a settings link", rendered.html.includes("/settings/notifications"));
+      check("there is a settings link", rendered.html.includes("?settings=notifications"));
       check("the plain-text part carries the same link",
         rendered.text.includes(thread));
     }

@@ -148,6 +148,36 @@ no email for ordinary call replies (33), cleanup and end states (34–35),
 provider-neutrality — the same backend functions driven as `tavus` with no
 OpenAI event in sight (36–39), and the adapter in isolation (40–48).
 
+## One failure mode worth not reintroducing
+
+`start()` is async and can be entered twice before React re-renders: Strict Mode
+double-invokes the mount effect in development, and the retry button can land on
+a connection that is still opening. **A `status` check cannot guard this** —
+both entries close over the same stale value, so both proceed. The second then
+overwrites `pc.current`, `audio.current` and `callId.current`, and the first
+call is left fully alive with nothing referencing it.
+
+That orphan is worse than a leak. It keeps talking, hang-up cannot reach it, and
+it holds the concurrency slot until the sweep. Two live sessions also play into
+the same speakers and listen through the same microphone, so each hears the
+other, `semantic_vad` fires, and they greet each other indefinitely.
+
+The guard is therefore a **ref**, incremented synchronously before the first
+await and re-checked after every one; an attempt that has lost ownership
+disposes what it just built, including ending a call the server has already
+created. `hangUp` and unmount retire the generation too, so a start still in
+flight cannot connect behind them.
+
+The audio element is attached to the document for the same class of reason: a
+detached element is not reliably tracked by the browser's echo canceller, and an
+output the canceller cannot see is an output she hears herself through.
+
+Verified in a real browser against the dev server, with `getUserMedia` stubbed
+to a synthetic stream so no hardware is needed: one click produces exactly one
+microphone prompt, one `/call/start`, one `<audio>` element and one
+`call_sessions` row; hang-up removes the element, posts one `/call/end`, and
+leaves the row `ended`/`hangup`.
+
 ## Phase 6: what Tavus reuses, what it must build
 
 **Reuses unchanged** (none of these import OpenAI anything):

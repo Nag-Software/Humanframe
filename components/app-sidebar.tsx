@@ -12,19 +12,22 @@ import {
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar"
-import { TerminalSquareIcon, Settings2Icon, CalendarDaysIcon, ListTodoIcon, LayoutDashboardIcon } from "lucide-react"
+import { TerminalSquareIcon, CalendarDaysIcon, ListTodoIcon, LayoutDashboardIcon } from "lucide-react"
 import Image from "next/image"
 
 import { useTranslations } from "@/components/i18n-provider"
+import type { NotificationSettingsValues } from "@/lib/settings/notification-settings"
 import { DEFAULT_PLAN, type PlanId } from "@/lib/subscription"
 
 export function AppSidebar({
   user,
   plan = DEFAULT_PLAN,
+  notificationSettings,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
   user: { name: string; email: string; avatar: string }
   plan?: PlanId
+  notificationSettings: NotificationSettingsValues
 }) {
   const t = useTranslations()
   const navMain = [
@@ -55,33 +58,6 @@ export function AppSidebar({
       url: "/calendar",
       icon: <CalendarDaysIcon />,
     },
-    {
-      title: t.nav.settings,
-      url: "/settings",
-      icon: <Settings2Icon />,
-      items: [
-        {
-          title: t.nav.general,
-          url: "/settings/general",
-        },
-        {
-          title: t.nav.notifications,
-          url: "/settings/notifications",
-        },
-        {
-          title: t.nav.team,
-          url: "/settings/team",
-        },
-        {
-          title: t.nav.billing,
-          url: "/settings/billing",
-        },
-        {
-          title: t.nav.limits,
-          url: "/settings/limits",
-        },
-      ],
-    },
   ]
 
   return (
@@ -109,7 +85,11 @@ export function AppSidebar({
         <NavMain items={navMain} label={t.nav.platform} />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={user} plan={plan} />
+        <NavUser
+          user={user}
+          plan={plan}
+          notificationSettings={notificationSettings}
+        />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
