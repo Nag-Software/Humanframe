@@ -806,12 +806,19 @@ notification_outbox  ──start()──►  notificationSender (detached workfl
 
 ## Idempotency, and what is actually promised
 
-Verified against Resend's documentation:
+Verified against Resend's documentation **and confirmed empirically against the
+live API** (2026-09-15):
 
 - header `Idempotency-Key`, up to 256 characters;
 - keys expire after **24 hours**;
 - same key, same payload → the original response, no second email;
 - same key, *different* payload → `409 invalid_idempotent_request`.
+
+Measured, not assumed: three requests with one key produced one email. The
+second returned the first response's id (`73f17ee7…` both times) without
+sending again, and the third — same key, changed body — came back `409
+invalid_idempotent_request`, "the request body was modified and doesn't match
+the original request".
 
 Our key is `humanframe-notification/<job id>` — stable for the life of the job,
 and the payload is derived from the job, so every retry is byte-identical.
@@ -857,6 +864,12 @@ browser path and the service-role path.
 unless `RESEND_API_KEY`, `NOTIFICATIONS_ENABLED=true`, and a
 `NOTIFICATIONS_TEST_RECIPIENT` that is on `NOTIFICATIONS_ALLOWLIST` are all set.
 
+**Run 2026-09-15, locally: passed.** Finished background work → outbox job →
+detached send → one email, provider id recorded on the job. The run also found
+the two guards working from the outside: an address that is not the Resend
+account owner is refused `403` while `onboarding@resend.dev` is the sender, and
+the allowlist check stops a send before the provider is called at all.
+
 ## Limits, stated plainly
 
 - **If the immediate workflow fails to start, the job waits for the heartbeat —
@@ -868,6 +881,13 @@ unless `RESEND_API_KEY`, `NOTIFICATIONS_ENABLED=true`, and a
   notification path inherits that risk exactly as the commitment timer does.
 - `background_done` is produced by `run_background_task`, which is new and
   minimal: it does one model call on `MEMORY_MODEL` and records the result.
+- **No Humanframe sender domain exists yet.** The Resend account has one
+  verified domain, `proanbud.no`, which belongs to a different product. Until
+  `humanframe.app` (or whichever domain is chosen) is verified there with its
+  SPF and DKIM records, the only usable sender is `onboarding@resend.dev`, and
+  that can only deliver to the Resend account owner's own address. So
+  `NOTIFICATIONS_FROM` cannot be left at its default in any environment that is
+  expected to reach a real user.
 - No push, no SMS, no notification dashboard. Recipients are individual users,
   not workspaces.
 
