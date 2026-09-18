@@ -10,11 +10,18 @@ export type Workspace = {
   slug: string;
   role: WorkspaceRole;
   plan: PlanId;
+  stripeCustomerId: string | null;
 };
 
 type MembershipRow = {
   role: WorkspaceRole;
-  workspaces: { id: string; name: string; slug: string; plan: string } | null;
+  workspaces: {
+    id: string;
+    name: string;
+    slug: string;
+    plan: string;
+    stripe_customer_id: string | null;
+  } | null;
 };
 
 /**
@@ -28,7 +35,7 @@ export async function getActiveWorkspace(
 ): Promise<Workspace | null> {
   const { data, error } = await client
     .from("workspace_members")
-    .select("role, workspaces:workspace_id (id, name, slug, plan)")
+    .select("role, workspaces:workspace_id (id, name, slug, plan, stripe_customer_id)")
     .eq("user_id", userId)
     .order("created_at", { ascending: true })
     .limit(1)
@@ -44,6 +51,7 @@ export async function getActiveWorkspace(
     slug: data.workspaces.slug,
     role: data.role,
     plan: isPlanId(data.workspaces.plan) ? data.workspaces.plan : DEFAULT_PLAN,
+    stripeCustomerId: data.workspaces.stripe_customer_id,
   };
 }
 

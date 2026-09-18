@@ -1,5 +1,6 @@
 import { defineHook } from "eve/hooks";
 
+import { isSignal } from "../../lib/signals";
 import { notificationDedupeKey, type NotificationEvent } from "../lib/notifications";
 import { notificationSender } from "../lib/notification-workflow";
 import { resolveSessionTarget, type SessionTarget } from "../lib/session-target";
@@ -45,10 +46,12 @@ export default defineHook({
             }
       );
 
-      // A wake is Humanframe talking to itself: it is stored so a retry can
-      // find its marker, but on the system channel, so the UI never renders it
-      // as something the user said.
+      // A signal is Humanframe talking to Maya — a wake, a new day, a call
+      // that ended. It is stored so a retry can find its marker, but on the
+      // system channel, so it is never filed as something the user said. Only
+      // a wake carries a notification: the user is present for the others.
       const first = parts.find((part) => part.type === "text");
+      const isSystem = typeof first?.text === "string" && isSignal(first.text);
       const isWake =
         typeof first?.text === "string" && isWakeMessage(first.text);
 
@@ -62,7 +65,7 @@ export default defineHook({
 
       await writeMessage(target, {
         role: "user",
-        channel: isWake ? "system" : "chat",
+        channel: isSystem ? "system" : "chat",
         content: parts.length > 0 ? parts : [{ type: "text", text: "" }],
         sourceMessageId: eventId(event),
         createdAt: eventTime(event),

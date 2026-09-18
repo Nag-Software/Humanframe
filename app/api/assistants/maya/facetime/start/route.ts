@@ -4,7 +4,7 @@ import { errorFields, logger } from "@/lib/logger";
 import { serverEnv } from "@/lib/env";
 import { getTranslations } from "@/lib/i18n";
 import { attachProviderCall, endCallSession } from "@/server/call/binding";
-import { prepareCall } from "@/server/call/prepare";
+import { allowedMinutes, prepareCall } from "@/server/call/prepare";
 import { rememberRenderSession } from "@/server/call/render-sessions";
 import {
   createLiveSession,
@@ -34,11 +34,14 @@ const bodySchema = z.object({
 });
 
 const CAMERA_DENIAL = `
-## This is a video prototype
+## This is a video call, and you cannot see the user
 
-You cannot see the user. There is no camera feed in this session. Do not
-comment on their appearance, room, or expression, and do not ask them to
-hold something up to the camera.
+There is no camera feed in this session. Do not comment on their appearance,
+room, or expression, and do not ask them to hold something up to the camera.
+
+Early in the call — in your first or second turn — say once, briefly and in
+your own words, that you can't see them yet and only they can see you. Then
+move on; do not repeat it.
 `;
 
 export async function POST(req: Request) {
@@ -65,6 +68,7 @@ export async function POST(req: Request) {
     threadTitle: t.maya.facetime.threadTitle,
     channel: "facetime",
     provider: "openai_realtime",
+    kind: "video",
   });
   if (!prepared.ok) {
     return prepared.response;
@@ -102,7 +106,8 @@ export async function POST(req: Request) {
       callSessionId: binding.callSessionId,
       threadId,
       answerSdp,
-      maxMinutes: env.CALL_MAX_MINUTES,
+      maxMinutes: allowedMinutes(binding.allowedSeconds, env.CALL_MAX_MINUTES),
+      limitMessage: t.maya.call.limits.minutesUsedUp,
       render: {
         conversationId: render.conversationId,
         conversationUrl: render.conversationUrl,

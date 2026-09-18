@@ -79,6 +79,22 @@ const serverSchema = z.object({
   // server/connectors/composio.ts.
   COMPOSIO_GMAIL_AUTH_CONFIG_ID: z.string().optional(),
   COMPOSIO_OUTLOOK_AUTH_CONFIG_ID: z.string().optional(),
+  // Billing. Off unless an environment turns it on: with it off, nothing is
+  // gated on a subscription and no Stripe call is ever made, so a preview
+  // deployment cannot charge anyone. The price ids come from
+  // `scripts/stripe-setup.mts`, which creates the catalogue once.
+  BILLING_ENABLED: z.enum(["true", "false"]).default("false"),
+  STRIPE_SECRET_KEY: z.string().min(1).optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
+  STRIPE_PRICE_STARTER_MONTH: z.string().min(1).optional(),
+  STRIPE_PRICE_STARTER_YEAR: z.string().min(1).optional(),
+  STRIPE_PRICE_PRO_MONTH: z.string().min(1).optional(),
+  STRIPE_PRICE_PRO_YEAR: z.string().min(1).optional(),
+  STRIPE_PRICE_OVERAGE_VOICE: z.string().min(1).optional(),
+  STRIPE_PRICE_OVERAGE_VIDEO: z.string().min(1).optional(),
+  STRIPE_PRICE_TRIAL_PASS: z.string().min(1).optional(),
+  STRIPE_METER_VOICE: z.string().default("humanframe_voice_overage_seconds"),
+  STRIPE_METER_VIDEO: z.string().default("humanframe_video_overage_seconds"),
   // FaceTime prototype. Off unless an environment turns it on. The key never
   // reaches the browser. A PAL id is created once by the setup script; this
   // route will not mint faces or clone a voice.

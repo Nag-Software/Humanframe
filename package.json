@@ -17,7 +17,11 @@
     "test:live:memory": "tsx tests/memory-live.test.mts",
     "test:live:notifications": "tsx tests/notifications-live.test.mts",
     "test:call": "tsx tests/call.test.mts",
-    "test:connectors": "tsx tests/connectors.test.mts"
+    "test:connectors": "tsx tests/connectors.test.mts",
+    "test:backend": "tsx tests/backend.test.mts",
+    "test:usage": "tsx tests/usage.test.mts",
+    "test:billing": "tsx tests/billing.test.mts",
+    "stripe:setup": "tsx scripts/stripe-setup.mts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.66",
@@ -49,6 +53,7 @@
     "remark-gfm": "^4.0.1",
     "shadcn": "^4.21.0",
     "shiki": "^4.4.3",
+    "stripe": "^22.6.2",
     "tw-animate-css": "^1.4.0",
     "tw-shimmer": "^0.4.13",
     "zod": "^4.6.4",

@@ -4,6 +4,7 @@ import { errorFields, logger } from "@/lib/logger";
 import { MAYA_BUCKET } from "@/lib/supabase/server";
 import { recordAttachment } from "@/server/db/repositories/attachments";
 import { getRequestScope } from "@/server/db/request-scope";
+import { LIMITS, rateLimitedResponse, takeRateLimit } from "@/server/rate-limit";
 
 const MAX_SIZE = 20 * 1024 * 1024;
 const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 30;
@@ -22,6 +23,10 @@ export async function POST(req: Request) {
   const scope = await getRequestScope();
   if (!scope) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!(await takeRateLimit(scope.client, LIMITS.upload))) {
+    return rateLimitedResponse(LIMITS.upload);
   }
 
   const form = await req.formData();

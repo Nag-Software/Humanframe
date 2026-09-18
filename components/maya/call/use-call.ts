@@ -54,6 +54,8 @@ export type CallStartResponse = {
   threadId: string;
   answerSdp: string;
   maxMinutes: number;
+  /** What to tell the user when the server's ceiling ends the call. */
+  limitMessage?: string;
   render?: {
     conversationId: string;
     conversationUrl: string;
@@ -115,6 +117,13 @@ export function useCall(options: UseCallOptions): UseCall {
    * idle timeout, reset on every fragment.
    */
   const speakingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * The courtesy end. The server decided at start how long it will serve this
+   * call (the plan's remaining minutes, or the global ceiling) and refuses to
+   * serve it past that — but it cannot cut the audio stream itself. This
+   * timer is the browser doing that part, and saying why.
+   */
+  const limitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
    * Which attempt owns the call right now.
    *
@@ -182,6 +191,10 @@ export function useCall(options: UseCallOptions): UseCall {
     if (speakingTimer.current) {
       clearTimeout(speakingTimer.current);
       speakingTimer.current = null;
+    }
+    if (limitTimer.current) {
+      clearTimeout(limitTimer.current);
+      limitTimer.current = null;
     }
 
     channel.current?.close();
@@ -467,6 +480,16 @@ export function useCall(options: UseCallOptions): UseCall {
       callId.current = body.callSessionId;
       setThreadId(body.threadId);
       callbacks.current.onStart?.(body);
+
+      limitTimer.current = setTimeout(() => {
+        if (!owns()) return;
+        generation.current += 1;
+        teardown();
+        void report("hangup");
+        setError("limit");
+        setErrorMessage(body.limitMessage ?? null);
+        setStatus("error");
+      }, Math.max(1, body.maxMinutes) * 60_000);
 
       await connection.setRemoteDescription({
         type: "answer",

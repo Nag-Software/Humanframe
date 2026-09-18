@@ -1,4 +1,19 @@
 import { logger } from "@/lib/logger";
+import {
+  decideCallStart,
+  type CallKind,
+  type PlanId,
+  type UsageSettings,
+} from "@/lib/plans";
+import { loadUsageSettings } from "@/lib/settings/usage-settings";
+import { billingEnabled } from "@/server/billing/stripe";
+import {
+  billingPeriod,
+  isEntitled,
+  loadSubscription,
+  type Subscription,
+} from "@/server/billing/subscriptions";
+import { loadUsageSummary } from "@/server/billing/usage";
 import { callClient } from "@/server/call/binding";
 
 /**
@@ -6,12 +21,18 @@ import { callClient } from "@/server/call/binding";
  *
  * A browser timer is a courtesy, not a limit: the page can be closed, the
  * script can be edited, and neither stops a call that is already connected.
- * These three checks run on the server, before a call is created, and they are
- * the only ones that bound spend:
+ * These checks run on the server, before a call is created, and they are the
+ * only ones that bound spend:
  *
- *  - CALL_MAX_PER_DAY   calls one user may start in a rolling 24 hours
+ *  - CALL_MAX_PER_DAY    calls one user may start in a rolling 24 hours
  *  - CALL_MAX_CONCURRENT calls one workspace may have open at once
- *  - CALL_MAX_MINUTES   how long a call may run before the server ends it
+ *  - CALL_MAX_MINUTES    how long any call may run before the server ends it
+ *  - the plan            included minutes, and whether the workspace has
+ *                        agreed to pay beyond them (`lib/plans.ts`)
+ *
+ * The plan decision yields a per-call ceiling in seconds, stored on the call,
+ * so a call inside the last included minutes ends when they run out unless
+ * overage is on — and never past the overage cap.
  *
  * The duration limit is enforced by refusing to serve a call that has run past
  * it — the provider bills the media path directly, so the honest statement is
@@ -33,57 +54,138 @@ function readNumber(variable: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+export type LimitReason =
+  | "daily_limit"
+  | "concurrent_limit"
+  | "no_subscription"
+  | "plan_exhausted"
+  | "overage_cap";
+
 export type LimitVerdict =
-  | { allowed: true }
-  | { allowed: false; reason: string; message: string };
+  | { allowed: true; allowedSeconds: number; beyondPlan: boolean }
+  | { allowed: false; reason: LimitReason; message: string };
+
+export type LimitMessages = Record<LimitReason, string>;
+
+const DEFAULT_MESSAGES: LimitMessages = {
+  daily_limit: "You have used today's calls. Try again tomorrow.",
+  concurrent_limit: "You already have a call in progress.",
+  no_subscription: "Humanframe needs a plan before Maya can take calls. Choose one in Settings.",
+  plan_exhausted:
+    "Your plan's minutes for this are used up. Allow usage beyond your plan in Settings to keep going.",
+  overage_cap: "You have reached the monthly cap you set for usage beyond your plan.",
+};
 
 export async function checkCallLimits(input: {
   workspaceId: string;
   userId: string;
+  kind: CallKind;
+  plan: PlanId;
+  settings?: UsageSettings;
+  /** Pass to skip the lookup; `null` means "known to have none". */
+  subscription?: Subscription | null;
+  /** Whether a subscription is required at all. Defaults to BILLING_ENABLED. */
+  requireSubscription?: boolean;
+  messages?: Partial<LimitMessages>;
+  now?: Date;
 }): Promise<LimitVerdict> {
   const client = callClient();
-  const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const messages = { ...DEFAULT_MESSAGES, ...input.messages };
+  const now = input.now ?? new Date();
+  const since = new Date(now.getTime() - 24 * 60 * 60_000).toISOString();
 
-  const [{ count: startedToday }, { count: open }] = await Promise.all([
-    client
-      .from("call_sessions")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", input.userId)
-      .gte("started_at", since),
-    client
-      .from("call_sessions")
-      .select("id", { count: "exact", head: true })
-      .eq("workspace_id", input.workspaceId)
-      .in("status", ["connecting", "active"]),
-  ]);
+  const subscription =
+    input.subscription === undefined
+      ? await loadSubscription(client, input.workspaceId)
+      : input.subscription;
+  const requireSubscription = input.requireSubscription ?? billingEnabled();
+  if (requireSubscription && !isEntitled(subscription?.status ?? "none")) {
+    return {
+      allowed: false,
+      reason: "no_subscription",
+      message: messages.no_subscription,
+    };
+  }
+
+  const [{ count: startedToday }, { count: open }, usage, settings] =
+    await Promise.all([
+      client
+        .from("call_sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", input.userId)
+        .gte("started_at", since),
+      client
+        .from("call_sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", input.workspaceId)
+        .in("status", ["connecting", "active"]),
+      loadUsageSummary(client, {
+        workspaceId: input.workspaceId,
+        plan: input.plan,
+        now,
+        period: billingPeriod(subscription) ?? undefined,
+      }),
+      input.settings ?? loadUsageSettings(client, input.workspaceId),
+    ]);
 
   if ((startedToday ?? 0) >= CALL_LIMITS.maxPerDay) {
     logger.warn("call.rate_limited", {
       workspaceId: input.workspaceId,
       startedToday,
     });
-    return {
-      allowed: false,
-      reason: "daily_limit",
-      message: "Du har brukt opp dagens samtaler. Prøv igjen i morgen.",
-    };
+    return { allowed: false, reason: "daily_limit", message: messages.daily_limit };
   }
 
   if ((open ?? 0) >= CALL_LIMITS.maxConcurrent) {
     return {
       allowed: false,
       reason: "concurrent_limit",
-      message: "Du har allerede en samtale i gang.",
+      message: messages.concurrent_limit,
     };
   }
 
-  return { allowed: true };
+  const allowance = decideCallStart({
+    kind: input.kind,
+    usage,
+    settings,
+    maxCallSeconds: CALL_LIMITS.maxMinutes * 60,
+  });
+
+  if (!allowance.allowed) {
+    logger.info("call.plan_refused", {
+      workspaceId: input.workspaceId,
+      kind: input.kind,
+      reason: allowance.reason,
+      overageUsd: usage.overageUsd,
+    });
+    return {
+      allowed: false,
+      reason: allowance.reason,
+      message: messages[allowance.reason],
+    };
+  }
+
+  return {
+    allowed: true,
+    allowedSeconds: allowance.allowedSeconds,
+    beyondPlan: allowance.beyondPlan,
+  };
 }
 
-/** True once a call has outlived the configured ceiling. */
-export function hasExpired(startedAt: string): boolean {
+/**
+ * True once a call has outlived what the server agreed to serve: the global
+ * ceiling, or the tighter one the plan decided at start.
+ */
+export function hasExpired(
+  startedAt: string,
+  allowedSeconds: number | null = null
+): boolean {
   const age = Date.now() - new Date(startedAt).getTime();
-  return age > CALL_LIMITS.maxMinutes * 60_000;
+  const ceiling = Math.min(
+    CALL_LIMITS.maxMinutes * 60,
+    allowedSeconds ?? Number.POSITIVE_INFINITY
+  );
+  return age > ceiling * 1000;
 }
 
 /**
@@ -135,7 +237,8 @@ export async function endAbandonedCalls(input: {
 
 /**
  * Closes calls that were never hung up — a closed laptop, a lost network, a
- * crashed tab — so they stop counting against the concurrency cap.
+ * crashed tab — so they stop counting against the concurrency cap and stop
+ * accruing minutes on the meter.
  *
  * This still matters for calls nobody comes back to: `endAbandonedCalls` only
  * runs when the same user starts another one.

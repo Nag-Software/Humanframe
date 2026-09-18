@@ -5,6 +5,7 @@ import {
   BadgeCheckIcon,
   BellIcon,
   CreditCardIcon,
+  GaugeIcon,
   LinkIcon,
   SparklesIcon,
 } from "lucide-react"
@@ -13,8 +14,8 @@ import { ConnectorStatus } from "@/components/connector-status"
 import { useTranslations } from "@/components/i18n-provider"
 import { LanguageSwitcher } from "@/components/language-switcher"
 import { NotificationSettingsForm } from "@/components/notification-settings-form"
-import { PageSkeleton } from "@/components/page-skeleton"
-import { Badge } from "@/components/ui/badge"
+import { UsageSettingsForm } from "@/components/usage-settings-form"
+import { BillingPanel } from "@/components/billing-panel"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -41,6 +42,8 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar"
 import type { Dictionary } from "@/lib/i18n/dictionaries"
+import type { UsageSettings, UsageSummary } from "@/lib/plans"
+import type { SubscriptionSummary } from "@/server/billing/subscriptions"
 import type { NotificationSettingsValues } from "@/lib/settings/notification-settings"
 import { DEFAULT_PLAN, type PlanId } from "@/lib/subscription"
 
@@ -48,6 +51,7 @@ export const SETTINGS_TABS = [
   { id: "upgrade", icon: SparklesIcon },
   { id: "account", icon: BadgeCheckIcon },
   { id: "billing", icon: CreditCardIcon },
+  { id: "usage", icon: GaugeIcon },
   { id: "notifications", icon: BellIcon },
   { id: "connections", icon: LinkIcon },
 ] as const
@@ -56,7 +60,7 @@ export type SettingsTabId = (typeof SETTINGS_TABS)[number]["id"]
 
 export const SETTINGS_NAV = [
   { items: [SETTINGS_TABS[0]] },
-  { items: [SETTINGS_TABS[1], SETTINGS_TABS[2], SETTINGS_TABS[3], SETTINGS_TABS[4]] },
+  { items: [SETTINGS_TABS[1], SETTINGS_TABS[2], SETTINGS_TABS[3], SETTINGS_TABS[4], SETTINGS_TABS[5]] },
 ] as const
 
 export const SETTINGS_QUERY = "settings"
@@ -81,6 +85,11 @@ export function SettingsDialog({
   user,
   plan = DEFAULT_PLAN,
   notificationSettings,
+  usage,
+  usageSettings,
+  billing,
+  billingEnabled,
+  canManageBilling,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -89,6 +98,11 @@ export function SettingsDialog({
   user: SettingsUser
   plan?: PlanId
   notificationSettings: NotificationSettingsValues
+  usage: UsageSummary
+  usageSettings: UsageSettings
+  billing: SubscriptionSummary
+  billingEnabled: boolean
+  canManageBilling: boolean
 }) {
   const t = useTranslations()
   const activeTab = SETTINGS_TABS.find((item) => item.id === tab) ?? SETTINGS_TABS[0]
@@ -180,6 +194,11 @@ export function SettingsDialog({
                 plan={plan}
                 t={t}
                 notificationSettings={notificationSettings}
+                usage={usage}
+                usageSettings={usageSettings}
+                billing={billing}
+                billingEnabled={billingEnabled}
+                canManageBilling={canManageBilling}
               />
             </div>
           </main>
@@ -195,24 +214,55 @@ function SettingsTabContent({
   plan,
   t,
   notificationSettings,
+  usage,
+  usageSettings,
+  billing,
+  billingEnabled,
+  canManageBilling,
 }: {
   tab: SettingsTabId
   user: SettingsUser
   plan: PlanId
   t: Dictionary
   notificationSettings: NotificationSettingsValues
+  usage: UsageSummary
+  usageSettings: UsageSettings
+  billing: SubscriptionSummary
+  billingEnabled: boolean
+  canManageBilling: boolean
 }) {
-  if (tab === "upgrade") {
-    return <UpgradePanel plan={plan} t={t} />
+  if (tab === "upgrade" || tab === "billing") {
+    return (
+      <section className="flex flex-col gap-4">
+        <TabIntro
+          title={tab === "upgrade" ? t.nav.upgrade : t.nav.billing}
+          description={t.settings.billing.description}
+        />
+        <BillingPanel
+          billing={billing}
+          enabled={billingEnabled}
+          canManage={canManageBilling}
+        />
+      </section>
+    )
   }
   if (tab === "account") {
     return <AccountPanel user={user} t={t} />
   }
-  if (tab === "billing") {
-    return <BillingPanel plan={plan} t={t} />
-  }
   if (tab === "connections") {
     return <ConnectionsPanel />
+  }
+  if (tab === "usage") {
+    return (
+      <section className="flex flex-col gap-4">
+        <TabIntro title={t.nav.usage} description={t.settings.usage.description} />
+        <UsageSettingsForm
+          usage={usage}
+          settings={usageSettings}
+          planName={t.nav.plans[plan]}
+        />
+      </section>
+    )
   }
   return (
     <NotificationsPanel
@@ -220,42 +270,6 @@ function SettingsTabContent({
       settings={notificationSettings}
       email={user.email}
     />
-  )
-}
-
-function UpgradePanel({ plan, t }: { plan: PlanId; t: Dictionary }) {
-  const copy = t.settings.upgrade
-  const features = [
-    copy.features.assistants,
-    copy.features.history,
-    copy.features.priority,
-  ]
-
-  return (
-    <section className="flex flex-col gap-4">
-      <TabIntro title={t.nav.upgrade} description={copy.description} />
-      <div className="flex items-center justify-between rounded-xl border border-border/60 p-4">
-        <div className="space-y-1">
-          <p className="text-sm font-medium">{copy.current}</p>
-          <p className="text-muted-foreground text-sm">{t.nav.plans[plan]}</p>
-        </div>
-        <Badge variant={plan === "pro" ? "default" : "secondary"}>
-          {t.nav.plans[plan]}
-        </Badge>
-      </div>
-      {plan === "pro" ? (
-        <p className="text-muted-foreground text-sm">{copy.onPro}</p>
-      ) : (
-        <div className="space-y-3 rounded-xl border border-border/60 p-4">
-          <p className="text-sm font-medium">{copy.included}</p>
-          <ul className="text-muted-foreground space-y-2 text-sm">
-            {features.map((feature) => (
-              <li key={feature}>{feature}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </section>
   )
 }
 
@@ -287,27 +301,6 @@ function AccountPanel({
         ))}
       </dl>
       <LanguageSwitcher />
-    </section>
-  )
-}
-
-function BillingPanel({ plan, t }: { plan: PlanId; t: Dictionary }) {
-  const copy = t.settings.billing
-
-  return (
-    <section className="flex flex-col gap-4">
-      <TabIntro title={t.nav.billing} description={copy.description} />
-      <div className="flex items-center justify-between rounded-xl border border-border/60 p-4">
-        <div className="space-y-1">
-          <p className="text-sm font-medium">{copy.plan}</p>
-          <p className="text-muted-foreground text-sm">{t.nav.plans[plan]}</p>
-        </div>
-        <Badge variant="secondary">{t.nav.plans[plan]}</Badge>
-      </div>
-      <div className="space-y-3">
-        <p className="text-sm font-medium">{copy.invoices}</p>
-        <PageSkeleton variant="list" rows={3} />
-      </div>
     </section>
   )
 }

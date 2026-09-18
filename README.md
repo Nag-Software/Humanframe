@@ -95,3 +95,28 @@ pnpm exec tsc --noEmit
 pnpm lint
 pnpm build
 ```
+
+### Billing (Stripe)
+
+Humanframe has no free plan. Billing is off unless `BILLING_ENABLED=true`, and
+with it off nothing is gated and Stripe is never called.
+
+| Variable | Purpose |
+| --- | --- |
+| `BILLING_ENABLED` | `true` to require a plan and report overage to Stripe |
+| `STRIPE_SECRET_KEY` | Server-only |
+| `STRIPE_WEBHOOK_SECRET` | Signing secret of the `/api/billing/webhook` endpoint |
+| `STRIPE_PRICE_*`, `STRIPE_METER_*` | The catalogue; printed by `pnpm stripe:setup` |
+
+`pnpm stripe:setup` creates the products, prices (Starter/Pro, monthly/yearly),
+the two usage meters with their per-minute overage prices, and the $3 trial
+pass — idempotently — and prints the variables. Plans, minutes and overage
+rates live in `lib/plans.ts`; the setup script and the marketing site use the
+same numbers.
+
+Flow: Settings › Billing → Checkout (3-day trial paid as one $3 pass, then the
+plan) → webhook mirrors the subscription into `subscriptions` and
+`workspaces.plan` → every ended call reports its seconds beyond the plan to
+the meter, once, keyed on the call id → Stripe invoices the overage per started
+minute with the next renewal. Plan changes, card and cancellation happen in
+the Stripe customer portal (Manage billing).

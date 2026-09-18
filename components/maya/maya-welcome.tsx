@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import { ThreadPrimitive } from "@assistant-ui/react";
 
 import { useTranslations } from "@/components/i18n-provider";
+import { ParticleField } from "@/components/maya/presence/particle-field";
 
 export function MayaWelcome() {
   const t = useTranslations();
@@ -15,14 +15,7 @@ export function MayaWelcome() {
 
   return (
     <div className="mb-8 flex flex-col items-center gap-5 px-4 text-center">
-      <Image
-        src="/assistants/maya.png"
-        alt=""
-        width={64}
-        height={64}
-        className="size-16 rounded-full object-cover"
-        priority
-      />
+      <ParticleField size={220} mode="idle" className="text-foreground -my-8" />
 
       <div className="space-y-1">
         <h1 className="text-2xl font-medium tracking-tight">{t.maya.greeting}</h1>

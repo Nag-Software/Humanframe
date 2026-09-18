@@ -1,4 +1,6 @@
+import { getTranslations } from "@/lib/i18n";
 import { logger } from "@/lib/logger";
+import type { CallKind } from "@/lib/plans";
 import {
   createCallSession,
   type CallBinding,
@@ -12,6 +14,7 @@ import {
 } from "@/server/call/limits";
 import { liveModel } from "@/server/call/openai-live";
 import { getAssistantBySlug } from "@/server/db/repositories/assistants";
+import { LIMITS, rateLimitedResponse, takeRateLimit } from "@/server/rate-limit";
 import {
   ensureThread,
   getThread,
@@ -43,6 +46,7 @@ export async function prepareCall(input: {
   threadTitle: string;
   channel: Channel;
   provider: CallProvider;
+  kind: CallKind;
 }): Promise<{ ok: true; call: PreparedCall } | { ok: false; response: Response }> {
   const scope = await getRequestScope();
   if (!scope) {
@@ -50,6 +54,12 @@ export async function prepareCall(input: {
       ok: false,
       response: Response.json({ error: "Unauthorized" }, { status: 401 }),
     };
+  }
+
+  // Before the daily and concurrency caps: a burst of start attempts must not
+  // reach the provider at all.
+  if (!(await takeRateLimit(scope.client, LIMITS.callStart))) {
+    return { ok: false, response: rateLimitedResponse(LIMITS.callStart) };
   }
 
   const assistant = await getAssistantBySlug(
@@ -77,9 +87,19 @@ export async function prepareCall(input: {
     });
   }
 
+  const t = await getTranslations();
   const verdict = await checkCallLimits({
     workspaceId: scope.workspaceId,
     userId: scope.userId,
+    kind: input.kind,
+    plan: scope.workspace.plan,
+    messages: {
+      daily_limit: t.maya.call.limits.dailyLimit,
+      concurrent_limit: t.maya.call.limits.concurrentLimit,
+      no_subscription: t.maya.call.limits.noSubscription,
+      plan_exhausted: t.maya.call.limits.planExhausted,
+      overage_cap: t.maya.call.limits.overageCap,
+    },
   });
   if (!verdict.allowed) {
     return {
@@ -115,7 +135,17 @@ export async function prepareCall(input: {
     userId: scope.userId,
     provider: input.provider,
     model: liveModel(),
+    kind: input.kind,
+    allowedSeconds: verdict.allowedSeconds,
   });
+
+  if (verdict.beyondPlan) {
+    logger.info("call.beyond_plan", {
+      workspaceId: scope.workspaceId,
+      kind: input.kind,
+      allowedSeconds: verdict.allowedSeconds,
+    });
+  }
 
   return {
     ok: true,
@@ -146,4 +176,17 @@ async function resolveThread(
     title,
   });
   return threadId;
+}
+
+/**
+ * What the browser is told the call may last, in minutes. The server's own
+ * ceiling is in seconds on the call row; this is the courtesy timer the
+ * browser hangs up on, since the server cannot cut the audio itself.
+ */
+export function allowedMinutes(
+  allowedSeconds: number | null,
+  maxMinutes: number
+): number {
+  if (allowedSeconds === null) return maxMinutes;
+  return Math.min(maxMinutes, Math.max(0.25, allowedSeconds / 60));
 }

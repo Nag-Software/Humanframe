@@ -26,6 +26,7 @@ import { TooltipIconButton } from "@/components/assistant-ui/elements/tooltip-ic
 import { useTranslations } from "@/components/i18n-provider";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { firstText, isSignal } from "@/lib/signals";
 import { cn } from "@/lib/utils";
 import {
   ActionBarMorePrimitive,
@@ -216,9 +217,11 @@ const ThreadMessage: FC = () => {
     useContext(ThreadComponentsContext);
   const role = useAuiState((s) => s.message.role);
   const isEditing = useAuiState((s) => s.message.composer.isEditing);
+  // A signal is Humanframe talking to Maya, not the user: it is never shown.
+  const signal = useAuiState((s) => isSignal(firstText(s.message.content)));
 
   if (isEditing) return <EditComposer />;
-  if (role === "user") return <UserMessage />;
+  if (role === "user") return signal ? null : <UserMessage />;
   return <AssistantMessageComponent />;
 };
 

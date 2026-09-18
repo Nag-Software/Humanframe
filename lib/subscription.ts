@@ -1,14 +1,15 @@
+import { PLANS, type PlanId } from "@/lib/plans";
+
 /**
- * Product plans shown in the shell. Billing is not persisted yet, so the app
- * defaults every workspace to Free until a `plan` column (or subscriptions
- * table) exists.
+ * Product plans shown in the shell. `workspaces.plan` is the denormalised
+ * tier; the minutes and prices behind it live in `lib/plans.ts`.
  */
-export const PLAN_IDS = ["free", "pro"] as const;
+export type { PlanId } from "@/lib/plans";
 
-export type PlanId = (typeof PLAN_IDS)[number];
+export const PLAN_IDS = Object.keys(PLANS) as PlanId[];
 
-export const DEFAULT_PLAN: PlanId = "free";
+export const DEFAULT_PLAN: PlanId = "starter";
 
 export function isPlanId(value: string | null | undefined): value is PlanId {
-  return value === "free" || value === "pro";
+  return value === "starter" || value === "pro";
 }

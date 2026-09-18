@@ -1,8 +1,13 @@
 "use client"
 
 import * as React from "react"
+import Image from "next/image"
+import { usePathname } from "next/navigation"
+import { HistoryIcon, Settings2Icon } from "lucide-react"
 
-import { NavMain } from "@/components/nav-main"
+import { useTranslations } from "@/components/i18n-provider"
+import { NavActivity } from "@/components/nav-activity"
+import { NavTeam, type Colleague } from "@/components/nav-team"
 import { NavUser } from "@/components/nav-user"
 import {
   SETTINGS_QUERY,
@@ -15,33 +20,53 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
   SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar"
-import {
-  CalendarDaysIcon,
-  LayoutDashboardIcon,
-  ListTodoIcon,
-  Settings2Icon,
-  TerminalSquareIcon,
-} from "lucide-react"
-import Image from "next/image"
-
-import { useTranslations } from "@/components/i18n-provider"
+import type { UsageSettings, UsageSummary } from "@/lib/plans"
+import type { SubscriptionSummary } from "@/server/billing/subscriptions"
 import type { NotificationSettingsValues } from "@/lib/settings/notification-settings"
 import { DEFAULT_PLAN, type PlanId } from "@/lib/subscription"
+import type { LiveActivity } from "@/server/db/repositories/activity"
 
+/**
+ * The sidebar is a list of people and what they are doing, not a module
+ * tree. Maya is the first row of the team; under her is what she is working
+ * on right now. The log and settings sit at the bottom; the user in the
+ * footer, as before.
+ */
 export function AppSidebar({
   user,
   plan = DEFAULT_PLAN,
   notificationSettings,
+  workspaceName,
+  colleagues,
+  activity,
+  usage,
+  usageSettings,
+  billing,
+  billingEnabled,
+  canManageBilling,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
   user: { name: string; email: string; avatar: string }
   plan?: PlanId
   notificationSettings: NotificationSettingsValues
+  workspaceName: string
+  colleagues: Colleague[]
+  activity: LiveActivity[]
+  usage: UsageSummary
+  usageSettings: UsageSettings
+  billing: SubscriptionSummary
+  billingEnabled: boolean
+  canManageBilling: boolean
 }) {
   const t = useTranslations()
+  const pathname = usePathname()
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [settingsTab, setSettingsTab] =
     React.useState<SettingsTabId>("account")
@@ -68,41 +93,8 @@ export function AppSidebar({
     setSettingsOpen(true)
   }
 
-  const navMain = [
-    {
-      title: t.nav.overview,
-      url: "/",
-      icon: <LayoutDashboardIcon />,
-    },
-    {
-      title: t.nav.assistants,
-      url: "/assistants",
-      icon: <TerminalSquareIcon />,
-      isActive: true,
-      items: [
-        {
-          title: t.nav.maya,
-          url: "/assistants/maya",
-        },
-      ],
-    },
-    {
-      title: t.nav.routineTasks,
-      url: "/routine-tasks",
-      icon: <ListTodoIcon />,
-    },
-    {
-      title: t.nav.calendar,
-      url: "/calendar",
-      icon: <CalendarDaysIcon />,
-    },
-    {
-      title: t.nav.settings,
-      icon: <Settings2Icon />,
-      isActive: settingsOpen,
-      onClick: () => openSettings(),
-    },
-  ]
+  const maya = colleagues[0]
+  const logHref = maya ? `${maya.href}/log` : "/assistants/maya/log"
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -110,11 +102,11 @@ export function AppSidebar({
         <TeamSwitcher
           teams={[
             {
-              name: "Humanframe",
+              name: workspaceName,
               logo: (
                 <Image
                   src="/icon.png"
-                  alt="Humanframe"
+                  alt=""
                   width={64}
                   height={64}
                   className="size-auto bg-white"
@@ -126,7 +118,34 @@ export function AppSidebar({
         />
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={navMain} label={t.nav.platform} />
+        <NavTeam colleagues={colleagues} activeSlug={maya?.slug ?? null} />
+        {maya ? (
+          <NavActivity initial={activity} conversationHref={maya.href} />
+        ) : null}
+        <SidebarGroup className="mt-auto">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip={t.nav.log}
+                isActive={pathname === logHref}
+                render={<a href={logHref} />}
+              >
+                <HistoryIcon />
+                <span>{t.nav.log}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip={t.nav.settings}
+                isActive={settingsOpen}
+                render={<button type="button" onClick={() => openSettings()} />}
+              >
+                <Settings2Icon />
+                <span>{t.nav.settings}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={user} onOpenSettings={openSettings} />
@@ -140,6 +159,11 @@ export function AppSidebar({
         user={user}
         plan={plan}
         notificationSettings={notificationSettings}
+        usage={usage}
+        usageSettings={usageSettings}
+        billing={billing}
+        billingEnabled={billingEnabled}
+        canManageBilling={canManageBilling}
       />
     </Sidebar>
   )

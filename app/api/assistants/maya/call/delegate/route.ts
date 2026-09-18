@@ -59,7 +59,7 @@ export async function POST(req: Request) {
   if (binding.status === "ended" || binding.status === "failed") {
     return Response.json({ error: "Call has ended" }, { status: 409 });
   }
-  if (hasExpired(binding.startedAt)) {
+  if (hasExpired(binding.startedAt, binding.allowedSeconds)) {
     return Response.json({ error: "Call has expired" }, { status: 409 });
   }
 

@@ -4,7 +4,7 @@ import { errorFields, logger } from "@/lib/logger";
 import { serverEnv } from "@/lib/env";
 import { getTranslations } from "@/lib/i18n";
 import { attachProviderCall, endCallSession } from "@/server/call/binding";
-import { prepareCall } from "@/server/call/prepare";
+import { allowedMinutes, prepareCall } from "@/server/call/prepare";
 import {
   createLiveSession,
   liveModel,
@@ -47,6 +47,7 @@ export async function POST(req: Request) {
     threadTitle: t.maya.call.threadTitle,
     channel: "live",
     provider: "openai_realtime",
+    kind: "voice",
   });
   if (!prepared.ok) {
     return prepared.response;
@@ -73,7 +74,8 @@ export async function POST(req: Request) {
       callSessionId: binding.callSessionId,
       threadId,
       answerSdp,
-      maxMinutes: env.CALL_MAX_MINUTES,
+      maxMinutes: allowedMinutes(binding.allowedSeconds, env.CALL_MAX_MINUTES),
+      limitMessage: t.maya.call.limits.minutesUsedUp,
     });
   } catch (error) {
     await endCallSession(binding, "provider_error", "failed");

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getRuntimeSupabase } from "@/agent/lib/supabase";
 import { errorFields, logger } from "@/lib/logger";
+import type { CallKind } from "@/lib/plans";
 
 /**
  * What a call is bound to.
@@ -27,6 +28,9 @@ export type CallBinding = {
   providerCallId: string | null;
   status: "connecting" | "active" | "ended" | "failed";
   startedAt: string;
+  kind: CallKind;
+  /** The ceiling the plan decided at start; null means only the global one. */
+  allowedSeconds: number | null;
 };
 
 export type CallProvider = "openai_realtime" | "tavus";
@@ -41,11 +45,13 @@ type CallSessionRow = {
   provider_call_id: string | null;
   status: CallBinding["status"];
   started_at: string;
+  kind: CallKind;
+  allowed_seconds: number | null;
 };
 
 const COLUMNS =
   "id, workspace_id, assistant_id, thread_id, user_id, provider, " +
-  "provider_call_id, status, started_at";
+  "provider_call_id, status, started_at, kind, allowed_seconds";
 
 /** The service-role client the call path writes with. */
 export function callClient(): SupabaseClient {
@@ -65,6 +71,9 @@ export async function createCallSession(input: {
   userId: string;
   provider: CallProvider;
   model: string;
+  kind?: CallKind;
+  /** The plan's ceiling for this call; null means only the global one. */
+  allowedSeconds?: number | null;
 }): Promise<CallBinding> {
   const client = callClient();
   const { data, error } = await client
@@ -76,6 +85,8 @@ export async function createCallSession(input: {
       user_id: input.userId,
       provider: input.provider,
       model: input.model,
+      kind: input.kind ?? "voice",
+      allowed_seconds: input.allowedSeconds ?? null,
     })
     .select(COLUMNS)
     .single<CallSessionRow>();
@@ -139,24 +150,45 @@ export async function attachProviderCall(
  * Ends a call. Idempotent: a browser that reports the same hang-up twice, or a
  * sweep that finds an abandoned call, does not overwrite the first reason.
  */
+export type EndedCall = {
+  durationMs: number;
+  turnCount: number;
+};
+
+/**
+ * Ends a call once. Returns what the call amounted to when this call is the
+ * one that ended it, and null when it was already over — so whatever follows
+ * an ending (the trace in the conversation) happens exactly once.
+ */
 export async function endCallSession(
   binding: CallBinding,
   reason: string,
   status: "ended" | "failed" = "ended"
-): Promise<void> {
-  const { error } = await binding.client
+): Promise<EndedCall | null> {
+  const endedAt = new Date();
+  const { data, error } = await binding.client
     .from("call_sessions")
-    .update({ status, end_reason: reason, ended_at: new Date().toISOString() })
+    .update({ status, end_reason: reason, ended_at: endedAt.toISOString() })
     .eq("id", binding.callSessionId)
     .eq("workspace_id", binding.workspaceId)
-    .in("status", ["connecting", "active"]);
+    .in("status", ["connecting", "active"])
+    .select("started_at, turn_count")
+    .maybeSingle<{ started_at: string; turn_count: number }>();
 
   if (error) {
     logger.error("call.end_failed", {
       callSessionId: binding.callSessionId,
       ...errorFields(error),
     });
+    return null;
   }
+  if (!data) {
+    return null;
+  }
+  return {
+    durationMs: Math.max(0, endedAt.getTime() - new Date(data.started_at).getTime()),
+    turnCount: data.turn_count,
+  };
 }
 
 function toBinding(client: SupabaseClient, row: CallSessionRow): CallBinding {
@@ -171,5 +203,7 @@ function toBinding(client: SupabaseClient, row: CallSessionRow): CallBinding {
     providerCallId: row.provider_call_id,
     status: row.status,
     startedAt: row.started_at,
+    kind: row.kind,
+    allowedSeconds: row.allowed_seconds,
   };
 }

@@ -13,22 +13,29 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/settings/notifications",
-        destination: "/?settings=notifications",
+        destination: "/assistants/maya?settings=notifications",
         permanent: false,
       },
       {
         source: "/settings/billing",
-        destination: "/?settings=billing",
+        destination: "/assistants/maya?settings=billing",
         permanent: false,
       },
       {
         source: "/settings",
-        destination: "/?settings=account",
+        destination: "/assistants/maya?settings=account",
         permanent: false,
       },
       {
         source: "/settings/:path*",
-        destination: "/?settings=account",
+        destination: "/assistants/maya?settings=account",
+        permanent: false,
+      },
+      // The dashboard modules are gone; their content lives on her profile.
+      { source: "/calendar", destination: "/assistants/maya", permanent: false },
+      {
+        source: "/routine-tasks",
+        destination: "/assistants/maya/profile",
         permanent: false,
       },
     ];

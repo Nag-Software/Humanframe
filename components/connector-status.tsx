@@ -71,7 +71,7 @@ export function ConnectorStatus() {
       if (!res.ok) throw new Error("failed")
       const data = (await res.json()) as { redirectUrl?: string }
       if (data.redirectUrl) {
-        window.location.href = data.redirectUrl
+        window.location.assign(data.redirectUrl)
         return
       }
       window.location.reload()

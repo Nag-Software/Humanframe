@@ -8,7 +8,15 @@ import { publicEnv } from "@/lib/env";
 // `/internal` is Humanframe calling itself — it authenticates with a Vercel
 // OIDC token, not a browser session, so a redirect to /login would break it
 // while proving nothing. The route runs its own, stricter check.
-const PUBLIC_PATHS = ["/login", "/auth", "/eve", "/internal"];
+// `/api/billing/webhook` is Stripe calling us: no browser session, and the
+// route proves the caller with the webhook signature instead.
+const PUBLIC_PATHS = [
+  "/login",
+  "/auth",
+  "/eve",
+  "/internal",
+  "/api/billing/webhook",
+];
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some(
