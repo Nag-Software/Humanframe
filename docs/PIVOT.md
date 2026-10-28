@@ -23,6 +23,46 @@ eierens godkjenning:
 
 Forskjellen er «noen tok telefonen» mot «jobben er i boks».
 
+## Oppdatering 29. okt. 2026: web først, eget hoveddomene
+
+Telefonen settes på vent. Vi bygger på nettsiden, og vi lar Snakk.ai eie
+kundeservice.
+
+**Snakk.ai sitt domene er å svare.** Én agent på telefon, chat og e-post,
+gratis FAQ-chatbot, BankID, CRM-sammendrag, pris per minutt, og salg mot
+bank, kommune, hotell og eiendom. Det de leverer etter en samtale, er et
+sammendrag.
+
+**Humanframes domene er fra henvendelse til oppdrag.** Vi lover ikke at noen
+svarer. Vi lover at forespørselen blir en jobb.
+
+| | Snakk.ai | Humanframe |
+|---|---|---|
+| Spørsmålet | «Hva kan jeg hjelpe deg med?» | «Hva skal gjøres, og når kan dere komme?» |
+| Resultat | Sammendrag i CRM | Tilbudsutkast og forslag til tid, godkjent med ett trykk |
+| Kunde | Kundeservice-team, finans, kommune | Eier-drevne småbedrifter: håndverk, verksted, klinikk |
+| Kanal | Telefon og volum | Nettsiden og bilder |
+| Målepunkt | Besvarte samtaler | Henvendelser som ble jobb, i kroner |
+| Pris | Per minutt | Fast per måned |
+
+**Det vi bygger nå:**
+
+1. **Widget på nettsiden** (én linje kode). Den stiller fagspørsmålene en
+   fagperson ville stilt, tar imot bilder midt i samtalen, og sender en
+   komplett forespørsel – ikke en FAQ-bot.
+2. **Tilbudsutkast** regnet ut fra eierens egen prisliste, som et nytt
+   forslag i godkjenningskøen. Eieren justerer og sender med ett trykk.
+   Proanbud er det naturlige neste steget for større tilbud.
+3. **Kundeside** per henvendelse: kunden ser status og tilbud, godtar, velger
+   tid og legger til bilder. Vi følger saken til den er avtalt.
+4. **Rapport i kroner:** forespørsler, tilbud sendt, tilbud godtatt og verdi.
+5. **Ny merkevare og nytt grensesnitt** med premium følelse: rolig, varmt og
+   presist – et verktøy en håndverker er stolt av å vise kunden.
+
+**Det vi ikke konkurrerer på:** telefonvolum, BankID, bank og kommune, og
+gratis FAQ-felt. Telefonen kommer senere som en kanal inn i samme løp; koden
+for den ligger klar (docs/RECEPTIONIST.md).
+
 ## Kunde og marked
 
 Målgruppen er bedrifter med 1–19 ansatte: ca. 174 000 i Norge (103 298 med 1–4,
