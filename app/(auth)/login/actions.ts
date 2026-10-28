@@ -6,6 +6,7 @@ import { z } from "zod";
 import { appOrigin } from "@/agent/lib/email-template";
 import { getDictionary, getLocale } from "@/lib/i18n";
 import { errorFields, logger } from "@/lib/logger";
+import { safeNextPath } from "@/lib/safe-next";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ensureBootstrap } from "@/server/auth/bootstrap";
 
@@ -18,8 +19,7 @@ export type SignInState = {
 
 const nextSchema = z
   .string()
-  .startsWith("/")
-  .refine((value) => !value.startsWith("//"))
+  .refine((value) => safeNextPath(value, "") === value)
   .optional();
 
 const schema = z.object({
@@ -121,5 +121,5 @@ export async function verifySignInCode(
     redirect("/login?error=bootstrap");
   }
 
-  redirect(parsed.data.next ?? "/");
+  redirect(safeNextPath(parsed.data.next));
 }

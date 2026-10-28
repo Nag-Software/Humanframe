@@ -2,6 +2,7 @@ import { type EmailOtpType } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { errorFields, logger } from "@/lib/logger";
+import { safeNextPath } from "@/lib/safe-next";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ensureBootstrap } from "@/server/auth/bootstrap";
 
@@ -10,11 +11,7 @@ const DEFAULT_REDIRECT = "/";
 /** Completes the magic-link or OAuth sign-in (PKCE `code` or `token_hash`). */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl;
-  const rawNext = searchParams.get("next");
-  const next =
-    rawNext?.startsWith("/") && !rawNext.startsWith("//")
-      ? rawNext
-      : DEFAULT_REDIRECT;
+  const next = safeNextPath(searchParams.get("next"), DEFAULT_REDIRECT);
 
   // Supabase sends the user back with `error`/`error_code` when the provider
   // or the link itself failed. Say which, instead of "expired" for everything.

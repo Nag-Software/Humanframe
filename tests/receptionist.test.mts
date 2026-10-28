@@ -22,7 +22,7 @@ const { freeSlots, isBookable } = await import("../server/receptionist/slots.ts"
 const { emptyProfile, normalizePhone, profileFromRow, profileInputSchema, profileReadiness } = await import(
   "../server/receptionist/profile.ts"
 );
-const { htmlToText, pickSubpages, isPrivateAddress, normalizeWebsiteUrl, decodeEntities } = await import(
+const { htmlToText, pickSubpages, isPrivateAddress, normalizeWebsiteUrl, decodeEntities, guardedLookup } = await import(
   "../server/receptionist/web.ts"
 );
 const { toDraft, mergeDraft } = await import("../server/receptionist/onboarding.ts");
@@ -36,7 +36,7 @@ const { silentCallIntake } = await import("../server/receptionist/processing.ts"
 const { twilioSignature, verifyTwilioSignature, sipUri, escapeXml } = await import(
   "../server/telephony/twilio.ts"
 );
-const { verifyOpenAIWebhook, signOpenAIWebhook, readIncomingCall } = await import(
+const { verifyOpenAIWebhook, signOpenAIWebhook, readIncomingCall, inquiryProof, verifyInquiryProof } = await import(
   "../server/telephony/openai-sip.ts"
 );
 const { encodeWav, parseWav, splitChannels, rmsLevel } = await import("../server/telephony/wav.ts");
@@ -260,6 +260,11 @@ const weekdays = {
       return true;
     }
   };
+  check("web: embedded IPv4 in IPv6 is private", isPrivateAddress("64:ff9b::a00:1") && isPrivateAddress("2002:a00:1::") && isPrivateAddress("::10.0.0.1"));
+  const connectRefused = await new Promise<boolean>((resolve) =>
+    guardedLookup("localhost", {}, (error) => resolve(error !== null))
+  );
+  check("web: the connect-time lookup refuses a name that resolves privately", connectRefused);
   check("web: bare domain gets https", normalizeWebsiteUrl("hansenror.no").toString() === "https://hansenror.no/");
   check(
     "web: refuses internal targets",
@@ -472,6 +477,14 @@ const baseIntake = {
     "openai: a tampered body fails",
     verifyOpenAIWebhook({ secret, body: body.replace("rtc_1", "rtc_2"), id: "wh_1", timestamp, signature: signed, now }) === null
   );
+  const sip = { apiKey: "k", projectId: "p", webhookSecret: secret, model: "m", voice: "v" };
+  const proof = inquiryProof(sip, "00000000-0000-0000-0000-000000000001");
+  check(
+    "openai: the inquiry proof binds the header to our own call",
+    verifyInquiryProof(sip, "00000000-0000-0000-0000-000000000001", proof) &&
+      !verifyInquiryProof(sip, "00000000-0000-0000-0000-000000000002", proof) &&
+      !verifyInquiryProof(sip, "00000000-0000-0000-0000-000000000001", undefined)
+  );
   check("openai: other events are not calls", readIncomingCall({ type: "response.done", data: {} }) === null);
 }
 
@@ -546,6 +559,7 @@ const baseIntake = {
   check("ics: UTC stamps", feed.includes("DTSTART:20261029T070000Z") && feed.includes("DTEND:20261029T080000Z"));
   check("ics: text escaped", feed.includes("SUMMARY:Lekkasje\\; Ola") && feed.includes("Linje 1\\nLinje 2") && feed.includes("Storgata 1\\, Bergen"));
   check("ics: escape helper", escapeIcsText("a,b;c\\d") === "a\\,b\\;c\\\\d");
+  check("ics: a bare CR cannot start a new property", escapeIcsText("x\rDTSTART:1") === "x\\nDTSTART:1");
   const folded = foldLine(`DESCRIPTION:${"ø".repeat(60)}`);
   check(
     "ics: long lines fold at 75 octets",

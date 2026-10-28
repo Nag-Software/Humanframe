@@ -6,6 +6,7 @@ import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { MagicLinkForm } from "@/components/auth/magic-link-form";
 import { getTranslations } from "@/lib/i18n";
+import { safeNextPath } from "@/lib/safe-next";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations();
@@ -17,8 +18,7 @@ export default async function LoginPage({
 }: PageProps<"/login">) {
   const params = await searchParams;
   const rawNext = typeof params.next === "string" ? params.next : undefined;
-  const next =
-    rawNext?.startsWith("/") && !rawNext.startsWith("//") ? rawNext : undefined;
+  const next = safeNextPath(rawNext, "") || undefined;
   const t = await getTranslations();
   const error = typeof params.error === "string" ? params.error : null;
   const errorMessage =

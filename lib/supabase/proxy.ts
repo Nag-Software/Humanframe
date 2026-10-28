@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { publicEnv } from "@/lib/env";
+import { safeNextPath } from "@/lib/safe-next";
 
 // `/eve` is the agent runtime's own surface: it runs its own auth walk (see
 // agent/channels/eve.ts) and its health route is deliberately public.
@@ -85,11 +86,7 @@ export async function updateSession(request: NextRequest) {
     request.nextUrl.pathname === "/login" &&
     !request.nextUrl.searchParams.has("error")
   ) {
-    const rawNext = request.nextUrl.searchParams.get("next");
-    const next =
-      rawNext?.startsWith("/") && !rawNext.startsWith("//")
-        ? rawNext
-        : "/";
+    const next = safeNextPath(request.nextUrl.searchParams.get("next"));
     return NextResponse.redirect(new URL(next, request.nextUrl.origin));
   }
 

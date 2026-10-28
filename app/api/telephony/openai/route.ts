@@ -8,6 +8,7 @@ import {
   readIncomingCall,
   readSipConfig,
   rejectCall,
+  verifyInquiryProof,
   verifyOpenAIWebhook,
 } from "@/server/telephony/openai-sip";
 
@@ -44,7 +45,11 @@ export async function POST(request: Request) {
   if (!call) return new Response(null, { status: 200 });
 
   const inquiryId = call.headers["x-humanframe-inquiry"];
-  if (!inquiryId || !/^[0-9a-f-]{36}$/i.test(inquiryId)) {
+  if (
+    !inquiryId ||
+    !/^[0-9a-f-]{36}$/i.test(inquiryId) ||
+    !verifyInquiryProof(config, inquiryId, call.headers["x-humanframe-proof"])
+  ) {
     logger.warn("sip.call_without_inquiry", {});
     await rejectCall(config, call.callId, 403);
     return new Response(null, { status: 200 });
@@ -52,10 +57,17 @@ export async function POST(request: Request) {
 
   try {
     const admin = getServiceRoleClient();
-    const inquiry = await getInquiry(admin, inquiryId);
-    if (!inquiry || inquiry.answeredAt) {
-      // Unknown, or already answered once: a replayed webhook must not open
-      // a second AI leg on the same inquiry.
+    // Claim the inquiry for this call in one conditional update: a replayed
+    // or concurrent webhook finds it taken and must not open a second AI leg.
+    const { data: claimed } = await admin
+      .from("inquiries")
+      .update({ provider_call_id: call.callId })
+      .eq("id", inquiryId)
+      .is("provider_call_id", null)
+      .select("id")
+      .maybeSingle<{ id: string }>();
+    const inquiry = claimed ? await getInquiry(admin, inquiryId) : null;
+    if (!inquiry) {
       await rejectCall(config, call.callId, 486);
       return new Response(null, { status: 200 });
     }
@@ -85,8 +97,8 @@ export async function POST(request: Request) {
       .from("inquiries")
       .update(
         accepted
-          ? { provider_call_id: call.callId, answered_at: now.toISOString() }
-          : { provider_call_id: call.callId, processing_error: "AI did not accept the call" }
+          ? { answered_at: now.toISOString() }
+          : { processing_error: "AI did not accept the call" }
       )
       .eq("id", inquiry.id);
   } catch (error) {

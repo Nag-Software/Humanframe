@@ -115,7 +115,17 @@ export async function prepareUploads(
   files: { name: string; type: string; size: number }[]
 ): Promise<{ name: string; path: string; token: string }[]> {
   const room = Math.max(0, link.maxFiles - link.filesSoFar);
-  const accepted = files.filter((file) => isAcceptedUpload(file.type, file.size)).slice(0, room);
+  const wanted = files.filter((file) => isAcceptedUpload(file.type, file.size)).slice(0, room);
+  if (wanted.length === 0) return [];
+
+  // Reserve the URLs first, against a cap of twice the file limit: retries
+  // after a failed upload are fine, an endless loop of them is not.
+  const { data: reserved } = await admin.rpc("reserve_upload_urls", {
+    p_link_id: link.id,
+    p_count: wanted.length,
+  });
+  const granted = typeof reserved === "number" ? reserved : 0;
+  const accepted = wanted.slice(0, granted);
 
   const prepared: { name: string; path: string; token: string }[] = [];
   for (const file of accepted) {

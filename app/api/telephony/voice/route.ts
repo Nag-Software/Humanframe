@@ -4,7 +4,7 @@ import { buildGreeting, buildVoicemailPrompt } from "@/server/receptionist/promp
 import { normalizePhone } from "@/server/receptionist/profile";
 import { findPhoneNumber, getInquiry, getInquiryByCallSid, loadProfile } from "@/server/receptionist/store";
 import { callbackUrl, forbidden, verifiedTwilioRequest } from "@/server/telephony/inbound";
-import { readSipConfig } from "@/server/telephony/openai-sip";
+import { inquiryProof, readSipConfig } from "@/server/telephony/openai-sip";
 import { escapeXml, say, sipUri, twimlResponse } from "@/server/telephony/twilio";
 
 /**
@@ -85,7 +85,10 @@ export async function POST(request: Request) {
 
   const uri = sipUri({
     projectId: sip.projectId,
-    headers: { "X-Humanframe-Inquiry": inquiry.id },
+    headers: {
+      "X-Humanframe-Inquiry": inquiry.id,
+      "X-Humanframe-Proof": inquiryProof(sip, inquiry.id),
+    },
   });
 
   return twimlResponse(

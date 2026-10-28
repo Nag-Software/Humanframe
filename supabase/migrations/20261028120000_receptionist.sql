@@ -319,10 +319,12 @@ create table if not exists public.bookings (
     references public.inquiries (id, workspace_id) on delete set null (inquiry_id)
 );
 
--- One booking per approved proposal, whatever retries happen.
+-- One booking per approved proposal, whatever retries happen. Not partial:
+-- the booking code upserts on (action_id), and Postgres cannot infer a
+-- partial index from a bare column list (42P10). NULLs stay distinct, so
+-- bookings without a proposal never conflict.
 create unique index if not exists bookings_action_idx
-  on public.bookings (action_id)
-  where action_id is not null;
+  on public.bookings (action_id);
 
 create index if not exists bookings_workspace_time_idx
   on public.bookings (workspace_id, starts_at)
@@ -397,6 +399,9 @@ create table if not exists public.inquiry_upload_links (
   inquiry_id uuid not null,
   token_hash text not null,
   max_files integer not null default 10 check (max_files between 1 and 30),
+  -- Signed upload URLs handed out so far. Capped, so a leaked link cannot
+  -- mint unlimited uploads that are never confirmed.
+  prepared_count integer not null default 0,
   expires_at timestamptz not null,
   created_at timestamptz not null default now(),
 
@@ -428,6 +433,10 @@ create table if not exists public.inquiry_files (
 create index if not exists inquiry_files_inquiry_idx
   on public.inquiry_files (inquiry_id, created_at);
 
+-- Confirming the same upload twice registers it once.
+create unique index if not exists inquiry_files_path_idx
+  on public.inquiry_files (storage_path);
+
 alter table public.inquiry_files enable row level security;
 
 drop policy if exists "members read inquiry files" on public.inquiry_files;
@@ -458,6 +467,36 @@ create policy "workspace inquiry file objects" on storage.objects
     bucket_id = 'inquiry-files'
     and public.is_workspace_member(public.workspace_id_from_object_name(name))
   );
+
+-- Hands out up to p_count signed-upload reservations for a link, never more
+-- than twice its file limit in total. Returns how many were granted.
+create or replace function public.reserve_upload_urls(p_link_id uuid, p_count int)
+returns int
+language plpgsql
+volatile
+security invoker
+set search_path = public
+as $$
+declare
+  room int;
+  granted int;
+begin
+  select l.max_files * 2 - l.prepared_count into room
+    from public.inquiry_upload_links l
+   where l.id = p_link_id and l.expires_at > now()
+   for update;
+  granted := greatest(0, least(coalesce(room, 0), p_count));
+  if granted > 0 then
+    update public.inquiry_upload_links
+       set prepared_count = prepared_count + granted
+     where id = p_link_id;
+  end if;
+  return granted;
+end;
+$$;
+
+revoke all on function public.reserve_upload_urls(uuid, int) from public, anon, authenticated;
+grant execute on function public.reserve_upload_urls(uuid, int) to service_role;
 
 -- ---------------------------------------------------------------------------
 -- Weekly reports

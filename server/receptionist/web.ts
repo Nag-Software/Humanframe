@@ -1,5 +1,8 @@
+import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { isIP, type LookupFunction } from "node:net";
 
 /**
  * Reading a business's public website, safely.
@@ -36,6 +39,10 @@ export function isPrivateAddress(address: string): boolean {
     const lower = address.toLowerCase();
     if (lower === "::" || lower === "::1") return true;
     if (lower.startsWith("::ffff:")) return isPrivateAddress(lower.slice(7));
+    // IPv4-compatible (::a.b.c.d), NAT64 (64:ff9b::/96) and 6to4 (2002::/16)
+    // all embed an IPv4 address that could be internal.
+    if (/^::\d+\.\d+\.\d+\.\d+$/.test(lower)) return true;
+    if (lower.startsWith("64:ff9b:") || lower.startsWith("2002:")) return true;
     return /^(fc|fd|fe8|fe9|fea|feb|ff)/.test(lower);
   }
   return true;
@@ -87,52 +94,93 @@ async function assertPublicHost(url: URL): Promise<void> {
 
 export type FetchedPage = { url: string; html: string };
 
+/**
+ * The address check has to happen at connect time, not before it: a hostname
+ * with a zero TTL can answer a public address to our check and a private one
+ * to the connection (DNS rebinding). This lookup is the one the socket uses.
+ */
+export const guardedLookup: LookupFunction = (hostname, options, callback) => {
+  dnsLookup(hostname, { ...options, all: true }, (error, addresses) => {
+    if (error) return callback(error, "", 0);
+    const list = addresses as unknown as LookupAddress[];
+    const unsafe = list.length === 0 || list.some((entry) => isPrivateAddress(entry.address));
+    if (unsafe) return callback(new UnsafeUrlError("Resolves to a private address"), "", 0);
+    if ((options as { all?: boolean }).all) {
+      return (callback as unknown as (err: null, all: LookupAddress[]) => void)(null, list);
+    }
+    callback(null, list[0].address, list[0].family);
+  });
+};
+
+function getOnce(url: URL): Promise<{ status: number; location: string | null; type: string; body: string }> {
+  return new Promise((resolve, reject) => {
+    const send = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const req = send(
+      url,
+      {
+        method: "GET",
+        lookup: guardedLookup,
+        timeout: TIMEOUT_MS,
+        headers: {
+          "user-agent": "HumanframeBot/1.0 (+https://humanframe.app)",
+          accept: "text/html,application/xhtml+xml",
+          "accept-language": "nb-NO,nb;q=0.9,no;q=0.8,en;q=0.5",
+        },
+      },
+      (response: IncomingMessage) => {
+        const status = response.statusCode ?? 0;
+        const location = typeof response.headers.location === "string" ? response.headers.location : null;
+        const type = String(response.headers["content-type"] ?? "");
+        if (status >= 300 && status < 400) {
+          response.resume();
+          return resolve({ status, location, type, body: "" });
+        }
+        const chunks: Buffer[] = [];
+        let total = 0;
+        response.on("data", (chunk: Buffer) => {
+          total += chunk.length;
+          if (total <= MAX_BYTES) chunks.push(chunk);
+          else response.destroy();
+        });
+        const finish = () =>
+          resolve({
+            status,
+            location,
+            type,
+            body: new TextDecoder("utf-8", { fatal: false }).decode(Buffer.concat(chunks).subarray(0, MAX_BYTES)),
+          });
+        response.on("end", finish);
+        response.on("close", finish);
+        response.on("error", reject);
+      }
+    );
+    req.on("timeout", () => req.destroy(new Error(`Timed out reading ${url.hostname}`)));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 /** One page, following at most three redirects, each re-checked. */
 export async function fetchPublicPage(start: URL): Promise<FetchedPage> {
   let current = start;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
     await assertPublicHost(current);
-    const response = await fetch(current, {
-      redirect: "manual",
-      headers: {
-        "user-agent": "HumanframeBot/1.0 (+https://humanframe.app)",
-        accept: "text/html,application/xhtml+xml",
-        "accept-language": "nb-NO,nb;q=0.9,no;q=0.8,en;q=0.5",
-      },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+    const response = await getOnce(current);
 
     if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get("location");
-      if (!location) throw new Error(`Redirect without location from ${current}`);
-      current = new URL(location, current);
+      if (!response.location) throw new Error(`Redirect without location from ${current}`);
+      current = new URL(response.location, current);
       continue;
     }
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       throw new Error(`HTTP ${response.status} from ${current.hostname}`);
     }
-    const type = response.headers.get("content-type") ?? "";
-    if (!/text\/html|application\/xhtml/i.test(type)) {
-      throw new Error(`Not HTML: ${type}`);
+    if (!/text\/html|application\/xhtml/i.test(response.type)) {
+      throw new Error(`Not HTML: ${response.type}`);
     }
-    return { url: current.toString(), html: await readCapped(response) };
+    return { url: current.toString(), html: response.body };
   }
   throw new Error("Too many redirects");
-}
-
-async function readCapped(response: Response): Promise<string> {
-  const reader = response.body?.getReader();
-  if (!reader) return "";
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (total < MAX_BYTES) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    total += value.byteLength;
-  }
-  await reader.cancel().catch(() => undefined);
-  return new TextDecoder("utf-8", { fatal: false }).decode(Buffer.concat(chunks).subarray(0, MAX_BYTES));
 }
 
 const ENTITIES: Record<string, string> = {

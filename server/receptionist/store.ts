@@ -436,6 +436,7 @@ export type Booking = {
   id: string;
   workspaceId: string;
   inquiryId: string | null;
+  actionId: string | null;
   startsAt: string;
   endsAt: string;
   title: string;
@@ -453,6 +454,7 @@ type BookingRow = {
   id: string;
   workspace_id: string;
   inquiry_id: string | null;
+  action_id: string | null;
   starts_at: string;
   ends_at: string;
   title: string;
@@ -467,7 +469,7 @@ type BookingRow = {
 };
 
 export const BOOKING_COLUMNS =
-  "id, workspace_id, inquiry_id, starts_at, ends_at, title, customer_name, " +
+  "id, workspace_id, inquiry_id, action_id, starts_at, ends_at, title, customer_name, " +
   "customer_phone, address, notes, status, calendar_provider, calendar_event_id, calendar_error";
 
 export function toBooking(row: BookingRow): Booking {
@@ -475,6 +477,7 @@ export function toBooking(row: BookingRow): Booking {
     id: row.id,
     workspaceId: row.workspace_id,
     inquiryId: row.inquiry_id,
+    actionId: row.action_id,
     startsAt: row.starts_at,
     endsAt: row.ends_at,
     title: row.title,

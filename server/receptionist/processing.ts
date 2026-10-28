@@ -18,7 +18,9 @@ import { loadProfile, toInquiry, type Inquiry, type InquiryRow } from "./store";
  * safe to run twice at once: only one worker gets a row.
  */
 
-const LEASE_MS = 5 * 60_000;
+// Longer than any one run can take (transcription, the model, the calendar),
+// so a sweep never claims a row that a live worker still holds.
+const LEASE_MS = 15 * 60_000;
 
 export async function processInquiry(admin: SupabaseClient, inquiryId: string | null, limit = 1) {
   const { data, error } = await admin.rpc("claim_inquiry_processing", {
@@ -34,8 +36,11 @@ export async function processInquiry(admin: SupabaseClient, inquiryId: string | 
   const outcomes: { id: string; ok: boolean }[] = [];
   for (const row of (data ?? []) as InquiryRow[]) {
     const inquiry = toInquiry(row);
+    // The attempt counter is this run's claim token: every claim bumps it, so
+    // a run that lost its lease finds a different number and writes nothing.
+    const attempt = (row as InquiryRow & { processing_attempts: number }).processing_attempts;
     try {
-      await runPipeline(admin, inquiry);
+      await runPipeline(admin, inquiry, attempt);
       outcomes.push({ id: inquiry.id, ok: true });
     } catch (failure) {
       logger.error("receptionist.processing_failed", { inquiryId: inquiry.id, ...errorFields(failure) });
@@ -45,14 +50,16 @@ export async function processInquiry(admin: SupabaseClient, inquiryId: string | 
           processing: "failed",
           processing_error: failure instanceof Error ? failure.message.slice(0, 500) : "failed",
         })
-        .eq("id", inquiry.id);
+        .eq("id", inquiry.id)
+        .eq("processing", "processing")
+        .eq("processing_attempts", attempt);
       outcomes.push({ id: inquiry.id, ok: false });
     }
   }
   return outcomes;
 }
 
-async function runPipeline(admin: SupabaseClient, inquiry: Inquiry): Promise<void> {
+async function runPipeline(admin: SupabaseClient, inquiry: Inquiry, attempt: number): Promise<void> {
   const profile = await loadProfile(admin, inquiry.workspaceId);
   const now = new Date();
 
@@ -80,6 +87,17 @@ async function runPipeline(admin: SupabaseClient, inquiry: Inquiry): Promise<voi
     now,
   });
 
+  // Still ours? A run that outlived its lease must not replace the proposals
+  // of the run that took over.
+  const { data: held } = await admin
+    .from("inquiries")
+    .select("id")
+    .eq("id", inquiry.id)
+    .eq("processing", "processing")
+    .eq("processing_attempts", attempt)
+    .maybeSingle<{ id: string }>();
+  if (!held) return;
+
   await saveProposals(admin, inquiry, proposals);
 
   const { data: updated, error } = await admin
@@ -92,14 +110,19 @@ async function runPipeline(admin: SupabaseClient, inquiry: Inquiry): Promise<voi
       urgency: intake.urgency,
       caller_name: intake.callerName ?? inquiry.callerName,
       caller_email: intake.callerEmail ?? inquiry.callerEmail,
-      status: intake.category === "spam" ? "dismissed" : "open",
+      // A new inquiry is already `open`; a retry must not reopen one the
+      // owner has since handled or dismissed.
+      ...(intake.category === "spam" && inquiry.status === "open" ? { status: "dismissed" } : {}),
       processing: "done",
       processing_error: null,
     })
     .eq("id", inquiry.id)
+    .eq("processing", "processing")
+    .eq("processing_attempts", attempt)
     .select("*")
-    .single<InquiryRow>();
-  if (error || !updated) throw new Error("Could not save the processed inquiry");
+    .maybeSingle<InquiryRow>();
+  if (error) throw new Error("Could not save the processed inquiry");
+  if (!updated) return;
 
   // The audio is not kept once its words are. Failing to delete is logged,
   // not fatal: the transcript is already safe.

@@ -11,6 +11,6 @@ export const maxDuration = 300;
 
 export async function GET(request: Request) {
   if (!isCronRequest(request)) return new Response("Forbidden", { status: 403 });
-  const outcomes = await processInquiry(getServiceRoleClient(), null, 10);
+  const outcomes = await processInquiry(getServiceRoleClient(), null, 3);
   return Response.json({ processed: outcomes.length, failed: outcomes.filter((o) => !o.ok).length });
 }

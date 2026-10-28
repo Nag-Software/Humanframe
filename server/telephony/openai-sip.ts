@@ -96,6 +96,23 @@ export function verifyOpenAIWebhook(input: {
   }
 }
 
+/**
+ * Proof that a SIP call carrying an inquiry id came through our own TwiML.
+ * The webhook signature only proves OpenAI sent the event; anyone who knows
+ * the project id can dial the SIP URI and set headers. This HMAC, keyed on a
+ * secret only we hold, is what ties the header to a call we placed.
+ */
+export function inquiryProof(config: SipConfig, inquiryId: string): string {
+  return createHmac("sha256", config.webhookSecret).update(`inquiry:${inquiryId}`).digest("base64url");
+}
+
+export function verifyInquiryProof(config: SipConfig, inquiryId: string, proof: string | undefined): boolean {
+  if (!proof) return false;
+  const expected = Buffer.from(inquiryProof(config, inquiryId));
+  const given = Buffer.from(proof);
+  return expected.length === given.length && timingSafeEqual(expected, given);
+}
+
 export function signOpenAIWebhook(secret: string, id: string, timestamp: string, body: string): string {
   const key = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
   return `v1,${createHmac("sha256", key).update(`${id}.${timestamp}.${body}`).digest("base64")}`;

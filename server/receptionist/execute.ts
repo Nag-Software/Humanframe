@@ -83,7 +83,7 @@ export async function decideAction(
   }
 
   if (action.kind === "booking" && !decision.force) {
-    const clash = await bookingClashes(admin, action.workspaceId, payload as BookingPayload);
+    const clash = await bookingClashes(admin, action.workspaceId, payload as BookingPayload, action.id);
     if (clash) return { ok: false, reason: "clash" };
   }
 
@@ -259,16 +259,18 @@ async function execute(admin: SupabaseClient, action: InquiryAction): Promise<Ou
 async function bookingClashes(
   admin: SupabaseClient,
   workspaceId: string,
-  payload: BookingPayload
+  payload: BookingPayload,
+  actionId: string
 ): Promise<boolean> {
   const start = new Date(payload.startsAt);
   const end = new Date(payload.endsAt);
   if (!(end > start)) return true;
   const profile = await loadProfile(admin, workspaceId);
-  const existing = await listBookings(admin, workspaceId, {
+  const existing = (await listBookings(admin, workspaceId, {
     from: new Date(start.getTime() - 86_400_000),
     to: new Date(end.getTime() + 86_400_000),
-  });
+  // A retried booking must not clash with the row its own first attempt wrote.
+  })).filter((booking) => booking.actionId !== actionId);
   return !isBookable(
     { start, end },
     {

@@ -1,7 +1,7 @@
 # The receptionist — how it works and how to switch it on
 
 Status: built 2026-10-28 on `claude/bold-wozniak-d35wwp`. The code, the
-migration and the 98 deterministic checks (`pnpm test:receptionist`) are in
+migration and the 102 deterministic checks (`pnpm test:receptionist`) are in
 place. **It has not taken a real phone call yet**: that needs the accounts in
 §3, and the wire details in §5 must be checked against a test call before a
 customer depends on it. The product reasoning is in [`PIVOT.md`](PIVOT.md).
@@ -216,6 +216,10 @@ one adapter file, so a difference is a one-file fix.
 - **Receptionist minutes in billing.** `lib/plans.ts` still meters Maya's
   call and video minutes; the PIVOT.md price plans (990/1 990/3 990 kr) are
   not in Stripe yet.
+- **Known limits, accepted for now:** two bookings for the same slot approved
+  at the same instant can both pass the clash check (no exclusion constraint);
+  two simultaneous "get number" clicks could buy two Twilio numbers; any
+  workspace member, not only owners, can edit and send a proposed SMS.
 - **Dashboards for the call log.** The weekly report counts forwarded calls;
   comparing with the operator's call log is done with the customer, as
   PIVOT.md describes.

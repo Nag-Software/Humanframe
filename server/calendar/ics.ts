@@ -25,7 +25,7 @@ export function escapeIcsText(value: string): string {
     .replace(/\\/g, "\\\\")
     .replace(/;/g, "\\;")
     .replace(/,/g, "\\,")
-    .replace(/\r?\n/g, "\\n");
+    .replace(/\r\n|\r|\n/g, "\\n");
 }
 
 /** Lines longer than 75 octets are folded with CRLF + space. */
