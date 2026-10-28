@@ -45,6 +45,12 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       ])
     : [{ threads: [] }, []];
   const latest = threads[0] ?? null;
+  const { count: inboxWaiting } = await scope.client
+    .from("inquiries")
+    .select("id", { count: "exact", head: true })
+    .eq("workspace_id", scope.workspaceId)
+    .eq("status", "open")
+    .eq("processing", "done");
 
   const colleagues: Colleague[] = [
     {
@@ -77,6 +83,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           billing={billing}
           billingEnabled={serverEnv().BILLING_ENABLED === "true"}
           canManageBilling={scope.workspace.role !== "member"}
+          inboxWaiting={inboxWaiting ?? 0}
         />
         <SidebarInset className="min-w-0">{children}</SidebarInset>
       </SidebarProvider>

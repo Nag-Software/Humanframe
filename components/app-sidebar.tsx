@@ -2,8 +2,15 @@
 
 import * as React from "react"
 import Image from "next/image"
+import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { HistoryIcon, Settings2Icon } from "lucide-react"
+import {
+  BarChart3Icon,
+  HistoryIcon,
+  InboxIcon,
+  PhoneForwardedIcon,
+  Settings2Icon,
+} from "lucide-react"
 
 import { useTranslations } from "@/components/i18n-provider"
 import { NavActivity } from "@/components/nav-activity"
@@ -23,6 +30,7 @@ import {
   SidebarGroup,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
@@ -51,6 +59,7 @@ export function AppSidebar({
   billing,
   billingEnabled,
   canManageBilling,
+  inboxWaiting = 0,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
   user: { name: string; email: string; avatar: string }
@@ -64,6 +73,8 @@ export function AppSidebar({
   billing: SubscriptionSummary
   billingEnabled: boolean
   canManageBilling: boolean
+  /** Inquiries with something waiting for the owner. */
+  inboxWaiting?: number
 }) {
   const t = useTranslations()
   const pathname = usePathname()
@@ -118,6 +129,43 @@ export function AppSidebar({
         />
       </SidebarHeader>
       <SidebarContent>
+        <SidebarGroup>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip={t.receptionist.nav.inbox}
+                isActive={pathname.startsWith("/inbox")}
+                render={<Link href="/inbox" />}
+              >
+                <InboxIcon />
+                <span>{t.receptionist.nav.inbox}</span>
+              </SidebarMenuButton>
+              {inboxWaiting > 0 ? (
+                <SidebarMenuBadge>{inboxWaiting}</SidebarMenuBadge>
+              ) : null}
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip={t.receptionist.nav.reports}
+                isActive={pathname.startsWith("/reports")}
+                render={<Link href="/reports" />}
+              >
+                <BarChart3Icon />
+                <span>{t.receptionist.nav.reports}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip={t.receptionist.nav.setup}
+                isActive={pathname.startsWith("/setup")}
+                render={<Link href="/setup" />}
+              >
+                <PhoneForwardedIcon />
+                <span>{t.receptionist.nav.setup}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
         <NavTeam colleagues={colleagues} activeSlug={maya?.slug ?? null} />
         {maya ? (
           <NavActivity initial={activity} conversationHref={maya.href} />

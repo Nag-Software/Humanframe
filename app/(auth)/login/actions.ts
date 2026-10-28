@@ -121,5 +121,5 @@ export async function verifySignInCode(
     redirect("/login?error=bootstrap");
   }
 
-  redirect(parsed.data.next ?? "/assistants/maya");
+  redirect(parsed.data.next ?? "/");
 }

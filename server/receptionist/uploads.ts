@@ -104,34 +104,69 @@ export async function resolveUploadLink(
   };
 }
 
-export async function storeUpload(
+/**
+ * Step one of an upload: a signed URL per accepted file. The browser sends the
+ * bytes straight to storage — a serverless function cannot take a 15 MB
+ * photo in its request body — and the path is ours, under this inquiry.
+ */
+export async function prepareUploads(
   admin: SupabaseClient,
   link: UploadLink,
-  file: { name: string; type: string; bytes: Buffer }
-): Promise<{ ok: true } | { ok: false; reason: "type" | "full" | "storage" }> {
-  if (!isAcceptedUpload(file.type, file.bytes.length)) return { ok: false, reason: "type" };
-  if (link.filesSoFar >= link.maxFiles) return { ok: false, reason: "full" };
+  files: { name: string; type: string; size: number }[]
+): Promise<{ name: string; path: string; token: string }[]> {
+  const room = Math.max(0, link.maxFiles - link.filesSoFar);
+  const accepted = files.filter((file) => isAcceptedUpload(file.type, file.size)).slice(0, room);
 
-  const path = `${link.workspaceId}/${link.inquiryId}/${randomUUID()}.${ALLOWED_TYPES[file.type]}`;
-  const upload = await admin.storage.from(UPLOAD_BUCKET).upload(path, file.bytes, {
-    contentType: file.type,
-    upsert: false,
-  });
-  if (upload.error) return { ok: false, reason: "storage" };
-
-  const { error } = await admin.from("inquiry_files").insert({
-    workspace_id: link.workspaceId,
-    inquiry_id: link.inquiryId,
-    link_id: link.id,
-    storage_path: path,
-    file_name: file.name.slice(0, 200),
-    mime_type: file.type,
-    size_bytes: file.bytes.length,
-  });
-  if (error) {
-    await admin.storage.from(UPLOAD_BUCKET).remove([path]);
-    return { ok: false, reason: "storage" };
+  const prepared: { name: string; path: string; token: string }[] = [];
+  for (const file of accepted) {
+    const path = `${link.workspaceId}/${link.inquiryId}/${randomUUID()}.${ALLOWED_TYPES[file.type]}`;
+    const { data, error } = await admin.storage.from(UPLOAD_BUCKET).createSignedUploadUrl(path);
+    if (error || !data) continue;
+    prepared.push({ name: file.name, path: data.path, token: data.token });
   }
-  link.filesSoFar += 1;
-  return { ok: true };
+  return prepared;
+}
+
+/**
+ * Step two: register what actually arrived. The object's real size and type
+ * are read back from storage — the browser's claim at step one proves
+ * nothing — and anything outside the rules is deleted.
+ */
+export async function confirmUploads(
+  admin: SupabaseClient,
+  link: UploadLink,
+  items: { path: string; name: string }[]
+): Promise<number> {
+  const prefix = `${link.workspaceId}/${link.inquiryId}/`;
+  let stored = 0;
+
+  for (const item of items.slice(0, 10)) {
+    if (!item.path.startsWith(prefix) || !/^[0-9a-f-]{36}\.[a-z0-9]{2,4}$/.test(item.path.slice(prefix.length))) {
+      continue;
+    }
+    if (link.filesSoFar >= link.maxFiles) break;
+
+    const { data: info } = await admin.storage.from(UPLOAD_BUCKET).info(item.path);
+    const size = info?.size ?? 0;
+    const type = info?.contentType ?? "";
+    if (!info || !isAcceptedUpload(type, size)) {
+      await admin.storage.from(UPLOAD_BUCKET).remove([item.path]);
+      continue;
+    }
+
+    const { error } = await admin.from("inquiry_files").insert({
+      workspace_id: link.workspaceId,
+      inquiry_id: link.inquiryId,
+      link_id: link.id,
+      storage_path: item.path,
+      file_name: item.name.slice(0, 200),
+      mime_type: type,
+      size_bytes: size,
+    });
+    if (!error) {
+      stored += 1;
+      link.filesSoFar += 1;
+    }
+  }
+  return stored;
 }

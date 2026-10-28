@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 
 /**
- * The default screen is the conversation. The query survives the hop so
+ * The default screen is the receptionist's inbox (docs/PIVOT.md): what came
+ * in, and what is waiting for a yes. The query survives the hop so
  * `/?settings=billing` still opens the dialog on the other side.
  */
 export default async function RootPage({ searchParams }: PageProps<"/">) {
@@ -13,5 +14,5 @@ export default async function RootPage({ searchParams }: PageProps<"/">) {
     }
   }
   const suffix = query.size > 0 ? `?${query.toString()}` : "";
-  redirect(`/assistants/maya${suffix}`);
+  redirect(`/inbox${suffix}`);
 }

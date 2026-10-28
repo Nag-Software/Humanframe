@@ -5,7 +5,7 @@ import { errorFields, logger } from "@/lib/logger";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ensureBootstrap } from "@/server/auth/bootstrap";
 
-const DEFAULT_REDIRECT = "/assistants/maya";
+const DEFAULT_REDIRECT = "/";
 
 /** Completes the magic-link or OAuth sign-in (PKCE `code` or `token_hash`). */
 export async function GET(request: NextRequest) {

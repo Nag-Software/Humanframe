@@ -21,6 +21,7 @@
     "test:backend": "tsx tests/backend.test.mts",
     "test:usage": "tsx tests/usage.test.mts",
     "test:billing": "tsx tests/billing.test.mts",
+    "test:receptionist": "tsx tests/receptionist.test.mts",
     "stripe:setup": "tsx scripts/stripe-setup.mts"
   },
   "dependencies": {

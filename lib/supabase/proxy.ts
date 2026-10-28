@@ -89,7 +89,7 @@ export async function updateSession(request: NextRequest) {
     const next =
       rawNext?.startsWith("/") && !rawNext.startsWith("//")
         ? rawNext
-        : "/assistants/maya";
+        : "/";
     return NextResponse.redirect(new URL(next, request.nextUrl.origin));
   }
 
