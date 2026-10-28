@@ -1,8 +1,14 @@
 # Humanframe
 
-An operating system for digital employees. The first one is **Maya** — a Chief of
-Staff you chat with, call, and meet face to face, who remembers you between
-conversations and keeps working after you close the tab.
+A Norwegian AI receptionist for small businesses that also does the work after
+the call: it answers the calls the business cannot take, then proposes the
+booking, the SMS with a photo link or the reply, and the owner approves each
+with one tap. See [`docs/PIVOT.md`](docs/PIVOT.md) for why, and
+[`docs/RECEPTIONIST.md`](docs/RECEPTIONIST.md) for how it works and how to
+switch it on.
+
+It grew out of **Maya** — a Chief of Staff you chat with, call, and meet face
+to face, who remembers you between conversations — and Maya is still here.
 
 The product vision lives in [`docs/VISION.md`](docs/VISION.md), the architecture
 and phase plan in [`docs/PLAN.md`](docs/PLAN.md), and the data model in
@@ -94,6 +100,7 @@ preview, so it sits behind the `AgentRuntime` interface.
 pnpm exec tsc --noEmit
 pnpm lint
 pnpm build
+pnpm test:receptionist
 ```
 
 ### Billing (Stripe)

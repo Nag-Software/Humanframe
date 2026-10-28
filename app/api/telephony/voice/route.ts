@@ -90,7 +90,7 @@ export async function POST(request: Request) {
 
   return twimlResponse(
     say(buildGreeting(profile)) +
-      `<Dial answerOnBridge="true" timeLimit="${MAX_CALL_SECONDS}" timeout="15" ` +
+      `<Dial timeLimit="${MAX_CALL_SECONDS}" timeout="15" ` +
       `record="record-from-answer-dual" ` +
       `recordingStatusCallback="${escapeXml(recordingCallback)}" ` +
       `recordingStatusCallbackEvent="completed" ` +

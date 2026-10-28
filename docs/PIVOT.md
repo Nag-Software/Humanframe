@@ -91,15 +91,23 @@ kunder.
 Seks ting skiller dagens Humanframe fra et produkt du kan selge. Kalender er
 allerede kalt blokkerende i [`GAPS.md`](GAPS.md) (2.6, 4.3).
 
-- [ ] Fiks innloggingen (feilmelding for bootstrap er lagt inn, resten ligger i
-      Supabase-oppsettet)
-- [ ] Telefoni via viderekobling av ubesvarte anrop fra kundens eget nummer,
-      uten nummerportering
-- [ ] Kalender og booking
-- [ ] SMS med lenke for bilder og mer info
-- [ ] Onboarding fra nettside-URL, så agenten lærer bedriften selv
-- [ ] Ukesrapport med antall henvendelser som ellers ville gått tapt, som
-      holder på kundene
+- [x] Fiks innloggingen: feilmelding for alle feiltilfeller, ingen
+      omdirigeringsløkke uten workspace, engangskode fra e-posten som reserve
+      for magiske lenker, og bootstrap som faller tilbake til servicerollen.
+      E-postmalen må limes inn i Supabase (docs/RECEPTIONIST.md §3.5).
+- [x] Telefoni via viderekobling av ubesvarte anrop fra kundens eget nummer,
+      uten nummerportering (Twilio + OpenAI Realtime SIP, telefonsvarer som
+      reserve)
+- [x] Kalender og booking (ledige tider fra åpningstider, egne bookinger og
+      Google Kalender; booking med ett trykk; kalenderabonnement for alle
+      andre kalendere)
+- [x] SMS med lenke for bilder og mer info (opplastingsside uten innlogging)
+- [x] Onboarding fra nettside-URL, så agenten lærer bedriften selv
+- [x] Ukesrapport med antall henvendelser som ellers ville gått tapt
+
+Alt er bygget og testet uten ekte telefonsamtaler. Før første kunde må
+kontoene settes opp og leverandørdetaljene verifiseres med en testsamtale:
+se [`RECEPTIONIST.md`](RECEPTIONIST.md) §3–5.
 
 ## 90 dager
 

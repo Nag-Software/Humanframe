@@ -75,7 +75,10 @@ create table if not exists public.business_profiles (
 
   -- The secret in the owner's calendar subscription URL. Rotating it is how
   -- a leaked feed is revoked.
-  calendar_feed_token text not null default encode(gen_random_bytes(24), 'hex'),
+  -- Core functions only: on Supabase pgcrypto lives in `extensions`, which
+  -- is not on every role's search_path.
+  calendar_feed_token text not null
+    default substr(replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''), 1, 48),
 
   -- What the website crawl read, for the owner to check against.
   learned_from jsonb not null default '[]'::jsonb,
@@ -432,9 +435,19 @@ create policy "members read inquiry files" on public.inquiry_files
   for select to authenticated
   using (public.is_workspace_member(workspace_id));
 
-insert into storage.buckets (id, name, public)
-values ('inquiry-files', 'inquiry-files', false)
-on conflict (id) do update set public = false;
+-- Uploads arrive through signed upload URLs straight from the customer's
+-- browser, so the bucket itself enforces size and type. The confirm step
+-- checks both again before a file is attached to an inquiry.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'inquiry-files', 'inquiry-files', false, 15728640,
+  array['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif',
+        'image/gif', 'application/pdf', 'video/mp4', 'video/quicktime']
+)
+on conflict (id) do update
+  set public = false,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
 
 -- Objects are named `<workspace_id>/<inquiry_id>/<file>`. Members read their
 -- own workspace's files through signed URLs; uploads come from the server.
