@@ -11,7 +11,7 @@ export function InquiryStatusButtons({
   status,
 }: {
   inquiryId: string;
-  status: "open" | "handled" | "dismissed";
+  status: "draft" | "open" | "handled" | "dismissed";
 }) {
   const copy = useTranslations().receptionist.inbox;
   const router = useRouter();
@@ -30,15 +30,15 @@ export function InquiryStatusButtons({
 
   return status === "open" ? (
     <div className="flex gap-2">
-      <Button size="sm" variant="outline" disabled={busy} onClick={() => void set("handled")}>
+      <Button size="sm" variant="outline" className="rounded-lg" disabled={busy} onClick={() => void set("handled")}>
         {copy.markHandled}
       </Button>
-      <Button size="sm" variant="ghost" disabled={busy} onClick={() => void set("dismissed")}>
+      <Button size="sm" variant="ghost" className="rounded-lg" disabled={busy} onClick={() => void set("dismissed")}>
         {copy.dismiss}
       </Button>
     </div>
   ) : (
-    <Button size="sm" variant="outline" disabled={busy} onClick={() => void set("open")}>
+    <Button size="sm" variant="outline" className="rounded-lg" disabled={busy} onClick={() => void set("open")}>
       {copy.reopen}
     </Button>
   );

@@ -38,13 +38,13 @@ export function MagicLinkForm({ next }: { next?: string }) {
           type="email"
           autoComplete="email"
           required
-          className="h-10"
+          className="h-11 rounded-xl"
           placeholder={t.auth.emailPlaceholder}
           aria-describedby={state.message ? "signin-message" : undefined}
         />
       </div>
 
-      <Button type="submit" className="h-10" disabled={pending}>
+      <Button type="submit" className="h-11 rounded-xl" disabled={pending}>
         {pending ? t.auth.submitting : t.auth.submit}
       </Button>
 
@@ -99,13 +99,13 @@ function CodeForm({
           autoComplete="one-time-code"
           pattern="[0-9 ]{6,12}"
           required
-          className="h-10 tracking-widest"
+          className="h-11 rounded-xl tracking-[0.3em] text-center text-lg"
           placeholder="123456"
           aria-describedby={state.message ? "code-message" : undefined}
         />
       </div>
 
-      <Button type="submit" className="h-10" disabled={pending}>
+      <Button type="submit" className="h-11 rounded-xl" disabled={pending}>
         {pending ? t.auth.verifying : t.auth.verifyCode}
       </Button>
 

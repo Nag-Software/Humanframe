@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 
-import { SidebarTrigger } from "@/components/ui/sidebar";
+import { formatNok } from "@/components/hf/money";
+import { Page, PageHeader, Section } from "@/components/hf/page";
+import { EmptyState, Stat, Surface } from "@/components/hf/surface";
 import { formatMessage, getTranslations } from "@/lib/i18n";
 import { requireRequestScope } from "@/server/db/request-scope";
 import { buildWeekStats, weekNumber, type WeekStats } from "@/server/receptionist/report";
@@ -13,9 +15,8 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 /**
- * The weekly reports, newest first, with the week in progress on top. The
- * headline number is the one that keeps a customer: inquiries that would
- * otherwise have gone unanswered.
+ * The report: requests, quotes and kroner, this week and every week before.
+ * The headline is accepted value — the number that keeps a customer.
  */
 export default async function ReportsPage() {
   const scope = await requireRequestScope();
@@ -31,8 +32,6 @@ export default async function ReportsPage() {
       .returns<{ id: string; week_start: string; stats: WeekStats; sent_to: string[] | null }[]>(),
   ]);
 
-  // This week so far: Monday 00:00 local until now. Read with the user's own
-  // client, so it can only ever count their own workspace.
   const now = new Date();
   const today = localParts(now, profile.timezone);
   const order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -47,21 +46,34 @@ export default async function ReportsPage() {
   const copy = t.receptionist.reports;
 
   return (
-    <div className="flex h-svh flex-col">
-      <div className="flex h-16 shrink-0 items-center gap-1 px-3">
-        <SidebarTrigger className="text-muted-foreground" />
-        <h1 className="font-display px-1.5 text-base font-semibold tracking-tight">{copy.title}</h1>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-16">
-        <div className="mx-auto flex w-full max-w-[720px] flex-col gap-8">
-          <p className="text-muted-foreground text-sm">{copy.description}</p>
+    <Page>
+      <PageHeader eyebrow={profile.name || scope.workspace.name} title={copy.title} description={copy.description} />
 
-          <WeekCard title={copy.thisWeek} stats={current} copy={copy} />
+      <Surface tone="ink" className="relative overflow-hidden p-7">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -top-24 -right-24 size-72 rounded-full opacity-25 blur-3xl"
+          style={{ background: "radial-gradient(circle, oklch(0.75 0.1 80), transparent 65%)" }}
+        />
+        <p className="text-primary-foreground/60 text-[12px] font-medium tracking-[0.08em] uppercase">{copy.thisWeek}</p>
+        <p className="font-serif tabular mt-3 text-[3.5rem] leading-none tracking-[-0.02em]">
+          {formatNok(current.acceptedValue ?? 0)}
+        </p>
+        <p className="text-primary-foreground/70 mt-2 text-sm">{copy.acceptedValue}</p>
+        <div className="mt-8 grid grid-cols-2 gap-6 sm:grid-cols-4">
+          <MiniStat label={copy.webRequests} value={current.webRequests ?? 0} />
+          <MiniStat label={copy.quotesSent} value={current.quotesSent ?? 0} />
+          <MiniStat label={copy.quotesAccepted} value={current.quotesAccepted ?? 0} />
+          <MiniStat label={copy.quotedValue} value={formatNok(current.quotedValue ?? 0)} />
+        </div>
+      </Surface>
 
-          {(reports.data ?? []).length === 0 ? (
-            <p className="text-muted-foreground border-border/60 border-t py-3 text-sm">{copy.empty}</p>
-          ) : (
-            (reports.data ?? []).map((report) => (
+      <Section title={copy.title}>
+        {(reports.data ?? []).length === 0 ? (
+          <EmptyState title={copy.title} body={copy.empty} />
+        ) : (
+          <div className="flex flex-col gap-4">
+            {(reports.data ?? []).map((report) => (
               <WeekCard
                 key={report.id}
                 title={formatMessage(copy.week, { week: weekNumber(report.week_start) })}
@@ -69,10 +81,19 @@ export default async function ReportsPage() {
                 copy={copy}
                 footer={report.sent_to?.length ? formatMessage(copy.sentTo, { to: report.sent_to.join(", ") }) : null}
               />
-            ))
-          )}
-        </div>
-      </div>
+            ))}
+          </div>
+        )}
+      </Section>
+    </Page>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-primary-foreground/60 text-xs">{label}</p>
+      <p className="font-serif tabular mt-1 text-2xl">{value}</p>
     </div>
   );
 }
@@ -88,35 +109,25 @@ function WeekCard({
   copy: Awaited<ReturnType<typeof getTranslations>>["receptionist"]["reports"];
   footer?: string | null;
 }) {
-  const caught = stats.answeredByAi + stats.voicemails + stats.smsInquiries;
-  const rows: [string, number][] = [
-    [copy.calls, stats.calls],
-    [copy.answered, stats.answeredByAi],
-    [copy.voicemails, stats.voicemails],
-    [copy.silent, stats.silent],
-    [copy.sms, stats.smsInquiries],
-    [copy.bookings, stats.bookings],
-    [copy.replies, stats.repliesSent],
-    [copy.minutes, stats.minutes],
-  ];
+  const requests = (stats.webRequests ?? 0) + stats.answeredByAi + stats.voicemails + stats.smsInquiries;
   return (
-    <section className="border-border/60 flex flex-col gap-4 rounded-xl border p-5">
+    <Surface className="flex flex-col gap-5 p-6">
       <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-sm font-medium">{title}</h2>
+        <h3 className="text-sm font-semibold">{title}</h3>
+        {footer ? <span className="text-muted-foreground truncate text-xs">{footer}</span> : null}
       </div>
-      <div>
-        <p className="font-display text-4xl font-semibold tracking-tight">{caught}</p>
-        <p className="text-muted-foreground text-sm">{copy.caught}</p>
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
+        <Stat label={copy.acceptedValue} value={formatNok(stats.acceptedValue ?? 0)} tone="brass" />
+        <Stat label={copy.webRequests} value={requests} />
+        <Stat label={copy.quotesSent} value={stats.quotesSent ?? 0} />
+        <Stat label={copy.quotesAccepted} value={stats.quotesAccepted ?? 0} tone="fjord" />
       </div>
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
-        {rows.map(([label, value]) => (
-          <div key={label}>
-            <dt className="text-muted-foreground text-xs">{label}</dt>
-            <dd className="font-medium tabular-nums">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      {footer ? <p className="text-muted-foreground text-xs">{footer}</p> : null}
-    </section>
+      {stats.calls > 0 ? (
+        <p className="text-muted-foreground border-t pt-4 text-sm">
+          {copy.calls}: {stats.calls} · {copy.answered}: {stats.answeredByAi} · {copy.voicemails}: {stats.voicemails} ·{" "}
+          {copy.minutes}: {stats.minutes}
+        </p>
+      ) : null}
+    </Surface>
   );
 }

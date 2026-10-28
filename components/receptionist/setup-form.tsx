@@ -32,6 +32,7 @@ export function SetupForm({
   feedUrl: initialFeedUrl,
   origin,
   canEdit,
+  widgetKey,
 }: {
   initialProfile: ProfileInput;
   initialReadiness: { ready: boolean; missing: Missing[] };
@@ -41,6 +42,7 @@ export function SetupForm({
   feedUrl: string | null;
   origin: string;
   canEdit: boolean;
+  widgetKey: string;
 }) {
   const t = useTranslations();
   const copy = t.receptionist.setup;
@@ -81,13 +83,15 @@ export function SetupForm({
         setFeedUrl(`${origin}/api/calendar/feed/${body.profile.calendarFeedToken}.ics`);
       }
       setSaveState({ kind: "saved" });
+      // The first save creates the profile row, and with it the widget key.
+      if (!widgetKey) window.location.reload();
     } catch {
       setSaveState({ kind: "error", message: "network" });
     }
   }
 
   return (
-    <fieldset disabled={!canEdit} className="flex flex-col gap-10">
+    <fieldset disabled={!canEdit} className="flex flex-col gap-12">
       <LearnSection
         onLearned={(draft, learnedSources) => {
           setProfile(draft);
@@ -95,6 +99,10 @@ export function SetupForm({
         }}
         defaultUrl={profile.websiteUrl ?? ""}
       />
+
+      <WidgetSection profile={profile} set={set} widgetKey={widgetKey} origin={origin} />
+
+      <PriceSection profile={profile} set={set} />
 
       <Section title={copy.profileTitle}>
         <TextField label={copy.name} value={profile.name} onChange={(value) => set("name", value)} />
@@ -182,8 +190,8 @@ export function SetupForm({
         <TestSmsButton />
       </Section>
 
-      <div className="bg-background/95 sticky bottom-0 -mx-2 flex flex-wrap items-center gap-3 border-t px-2 py-3 backdrop-blur">
-        <Button onClick={() => void save()} disabled={saveState.kind === "saving"}>
+      <div className="bg-card/90 shadow-lift sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-2xl px-4 py-3 backdrop-blur">
+        <Button className="h-10 rounded-xl px-5" onClick={() => void save()} disabled={saveState.kind === "saving"}>
           {saveState.kind === "saving" ? copy.saving : copy.save}
         </Button>
         <p
@@ -202,7 +210,15 @@ export function SetupForm({
         </p>
       </div>
 
-      <NumberSection initial={initialNumber} />
+      <details className="group">
+        <summary className="text-muted-foreground hover:text-foreground flex cursor-pointer list-none items-center gap-2 text-sm font-medium">
+          <span className="transition-transform group-open:rotate-90">›</span> {copy.phoneTitle}
+        </summary>
+        <p className="text-muted-foreground mt-2 text-sm">{copy.phoneLater}</p>
+        <div className="mt-6">
+          <NumberSection initial={initialNumber} />
+        </div>
+      </details>
     </fieldset>
   );
 }
@@ -699,11 +715,161 @@ function Section({
   return (
     <section className="flex flex-col gap-4">
       <div className="space-y-1">
-        <h2 className="font-display text-base font-semibold tracking-tight">{title}</h2>
-        {description ? <p className="text-muted-foreground text-sm">{description}</p> : null}
+        <h2 className="font-serif text-[1.75rem] leading-tight tracking-[-0.01em]">{title.replace(/^\d+\.\s*/, "")}</h2>
+        {description ? <p className="text-muted-foreground max-w-[560px] text-sm leading-relaxed">{description}</p> : null}
       </div>
-      {children}
+      <div className="bg-card shadow-hairline flex flex-col gap-5 rounded-2xl p-6">{children}</div>
     </section>
+  );
+}
+
+function WidgetSection({
+  profile,
+  set,
+  widgetKey,
+  origin,
+}: {
+  profile: ProfileInput;
+  set: <K extends keyof ProfileInput>(key: K, value: ProfileInput[K]) => void;
+  widgetKey: string;
+  origin: string;
+}) {
+  const copy = useTranslations().receptionist.setup;
+  const [copied, setCopied] = useState<"snippet" | "link" | null>(null);
+  const snippet = `<script src="${origin}/widget.js" data-key="${widgetKey}"${profile.widgetColor ? ` data-color="${profile.widgetColor}"` : ""} async></script>`;
+  const link = `${origin}/w/${widgetKey}`;
+  const copyText = (value: string, which: "snippet" | "link") =>
+    void navigator.clipboard.writeText(value).then(() => {
+      setCopied(which);
+      setTimeout(() => setCopied(null), 1800);
+    });
+
+  return (
+    <Section title={copy.widgetTitle} description={copy.widgetDescription}>
+      {widgetKey ? (
+        <>
+          <div className="bg-primary text-primary-foreground relative overflow-hidden rounded-xl p-4">
+            <pre className="overflow-x-auto pr-20 font-mono text-[12.5px] leading-relaxed whitespace-pre-wrap break-all">{snippet}</pre>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="absolute top-3 right-3 rounded-lg"
+              onClick={() => copyText(snippet, "snippet")}
+            >
+              {copied === "snippet" ? copy.copied : copy.copy}
+            </Button>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-muted-foreground text-xs font-medium">{copy.widgetLink}</span>
+            <div className="flex gap-2">
+              <Input readOnly value={link} className="h-9 font-mono text-xs" onFocus={(event) => event.target.select()} />
+              <Button variant="outline" size="sm" className="h-9 rounded-lg" onClick={() => copyText(link, "link")}>
+                {copied === "link" ? copy.copied : copy.copy}
+              </Button>
+              <a
+                href={link}
+                target="_blank"
+                rel="noreferrer"
+                className="bg-fjord text-fjord-foreground flex h-9 items-center rounded-lg px-3 text-sm font-medium whitespace-nowrap"
+              >
+                {copy.openWidget}
+              </a>
+            </div>
+            <span className="text-muted-foreground text-xs">{copy.widgetLinkHint}</span>
+          </div>
+        </>
+      ) : (
+        <p className="text-muted-foreground text-sm">{copy.widgetSaveFirst}</p>
+      )}
+      <ToggleField label={copy.widgetEnabled} checked={profile.widgetEnabled} onChange={(value) => set("widgetEnabled", value)} />
+      <AreaField
+        label={copy.widgetGreeting}
+        placeholder={copy.widgetGreetingPlaceholder}
+        value={profile.widgetGreeting}
+        onChange={(value) => set("widgetGreeting", value)}
+      />
+      <label className="flex items-center justify-between gap-6">
+        <span className="text-sm">{copy.widgetColor}</span>
+        <span className="flex items-center gap-2">
+          <input
+            type="color"
+            value={profile.widgetColor ?? "#24493f"}
+            onChange={(event) => set("widgetColor", event.target.value)}
+            className="size-8 cursor-pointer rounded-lg border bg-transparent"
+          />
+          <span className="text-muted-foreground font-mono text-xs">{profile.widgetColor ?? "#24493F"}</span>
+        </span>
+      </label>
+    </Section>
+  );
+}
+
+function PriceSection({
+  profile,
+  set,
+}: {
+  profile: ProfileInput;
+  set: <K extends keyof ProfileInput>(key: K, value: ProfileInput[K]) => void;
+}) {
+  const copy = useTranslations().receptionist.setup;
+  const items = profile.priceItems;
+  const update = (index: number, patch: Partial<ProfileInput["priceItems"][number]>) =>
+    set(
+      "priceItems",
+      items.map((item, at) => (at === index ? { ...item, ...patch } : item))
+    );
+  const units = ["stk", "time", "m2", "lm", "fast"] as const;
+
+  return (
+    <Section title={copy.priceTitle} description={copy.priceDescription}>
+      <div className="flex flex-col gap-2">
+        {items.length > 0 ? (
+          <div className="text-muted-foreground grid grid-cols-[1fr_6rem_7rem_auto] gap-2 px-1 text-xs font-medium">
+            <span>{copy.priceName}</span>
+            <span>{copy.priceUnit}</span>
+            <span>{copy.pricePrice}</span>
+            <span className="w-8" />
+          </div>
+        ) : null}
+        {items.map((item, index) => (
+          <div key={index} className="grid grid-cols-[1fr_6rem_7rem_auto] items-center gap-2">
+            <Input value={item.name} onChange={(event) => update(index, { name: event.target.value })} placeholder="Timepris" />
+            <select
+              className="border-input h-8 rounded-lg border bg-transparent px-2 text-sm"
+              value={item.unit}
+              onChange={(event) => update(index, { unit: event.target.value as (typeof units)[number] })}
+            >
+              {units.map((unit) => (
+                <option key={unit} value={unit}>
+                  {copy.units[unit]}
+                </option>
+              ))}
+            </select>
+            <Input
+              type="number"
+              min="0"
+              value={item.price}
+              onChange={(event) => update(index, { price: Math.max(0, Number(event.target.value) || 0) })}
+              className="tabular"
+            />
+            <Button variant="ghost" size="icon" aria-label={copy.remove} onClick={() => set("priceItems", items.filter((_, at) => at !== index))}>
+              <XIcon />
+            </Button>
+          </div>
+        ))}
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-fit gap-1.5"
+          onClick={() => set("priceItems", [...items, { name: "", unit: "stk", price: 0 }])}
+        >
+          <PlusIcon /> {copy.addPrice}
+        </Button>
+      </div>
+      <ToggleField label={copy.pricesIncludeVat} checked={profile.pricesIncludeVat} onChange={(value) => set("pricesIncludeVat", value)} />
+      <NumberField label={copy.quoteValidDays} value={profile.quoteValidDays} min={1} max={365} onChange={(value) => set("quoteValidDays", value)} />
+      <AreaField label={copy.quoteTerms} value={profile.quoteTerms} onChange={(value) => set("quoteTerms", value)} />
+    </Section>
   );
 }
 

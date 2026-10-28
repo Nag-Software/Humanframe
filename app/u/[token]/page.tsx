@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { LogoMark } from "@/components/hf/logo";
 import { UploadForm } from "@/components/receptionist/upload-form";
 import { formatMessage, getTranslations } from "@/lib/i18n";
 import { getServiceRoleClient } from "@/lib/supabase/server";
@@ -21,15 +22,15 @@ export default async function UploadPage({ params }: PageProps<"/u/[token]">) {
   const link = await resolveUploadLink(getServiceRoleClient(), token);
 
   return (
-    <main className="flex min-h-svh items-center justify-center p-6">
-      <div className="w-full max-w-sm space-y-6">
+    <main className="flex min-h-svh flex-col items-center justify-center gap-6 p-6">
+      <div className="bg-card shadow-lift w-full max-w-sm space-y-6 rounded-3xl p-7">
         {link ? (
           <>
             <div className="space-y-2">
-              <h1 className="font-display text-2xl font-medium tracking-tight">
+              <h1 className="font-serif text-[2rem] leading-[1.05] tracking-[-0.02em]">
                 {formatMessage(copy.title, { name: link.businessName || "oss" })}
               </h1>
-              <p className="text-muted-foreground text-sm">{copy.description}</p>
+              <p className="text-muted-foreground text-sm leading-relaxed">{copy.description}</p>
             </div>
             <UploadForm token={token} remaining={Math.max(0, link.maxFiles - link.filesSoFar)} />
           </>
@@ -37,6 +38,9 @@ export default async function UploadPage({ params }: PageProps<"/u/[token]">) {
           <p className="text-sm">{copy.expired}</p>
         )}
       </div>
+      <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+        <LogoMark className="size-3.5" /> Drevet av Humanframe
+      </p>
     </main>
   );
 }

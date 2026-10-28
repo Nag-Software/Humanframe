@@ -61,7 +61,7 @@ export function UploadForm({ token, remaining }: { token: string; remaining: num
 
   return (
     <div className="space-y-4">
-      <label className="border-border hover:bg-muted/40 flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed p-6 text-center">
+      <label className="hover:bg-accent/60 bg-muted/40 flex cursor-pointer flex-col items-center gap-2 rounded-2xl border border-dashed p-7 text-center transition-colors">
         <span className="text-sm font-medium">{copy.choose}</span>
         <span className="text-muted-foreground text-xs">{copy.limit}</span>
         <input
@@ -84,7 +84,7 @@ export function UploadForm({ token, remaining }: { token: string; remaining: num
       ) : null}
 
       <Button
-        className="h-10 w-full"
+        className="h-11 w-full rounded-xl"
         disabled={files.length === 0 || state === "sending" || remaining === 0}
         onClick={() => void send()}
       >

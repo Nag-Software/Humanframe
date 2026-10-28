@@ -148,8 +148,8 @@ export async function insertPhoneNumber(
 // Inquiries
 // ---------------------------------------------------------------------------
 
-export type InquiryChannel = "phone" | "voicemail" | "sms";
-export type InquiryStatus = "open" | "handled" | "dismissed";
+export type InquiryChannel = "phone" | "voicemail" | "sms" | "web";
+export type InquiryStatus = "draft" | "open" | "handled" | "dismissed";
 
 export type Inquiry = {
   id: string;
@@ -273,6 +273,9 @@ export async function listInquiries(
     .limit(options.limit ?? 50);
   if (options.status && options.status !== "all") {
     query = query.eq("status", options.status);
+  } else {
+    // A widget conversation the customer has not sent is not an inquiry yet.
+    query = query.neq("status", "draft");
   }
   const { data } = await query.returns<InquiryRow[]>();
   return (data ?? []).map(toInquiry);

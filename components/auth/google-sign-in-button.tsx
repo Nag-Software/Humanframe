@@ -64,7 +64,7 @@ export function GoogleSignInButton({ next }: { next?: string }) {
       <Button
         type="button"
         variant="outline"
-        className="h-10 w-full gap-2.5 font-normal"
+        className="bg-card h-11 w-full gap-2.5 rounded-xl font-medium"
         disabled={pending}
         onClick={signIn}
       >

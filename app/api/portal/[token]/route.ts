@@ -4,6 +4,7 @@ import { getServiceRoleClient } from "@/lib/supabase/server";
 import { decideQuote, postCustomerMessage, requestTime } from "@/server/receptionist/portal-actions";
 import { resolvePortal } from "@/server/receptionist/portal";
 import { getInquiry, loadProfile } from "@/server/receptionist/store";
+import { createUploadLink } from "@/server/receptionist/uploads";
 
 /** What the customer does on their page. The token is the whole credential. */
 
@@ -12,6 +13,7 @@ const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("decline"), quoteId: z.uuid(), reason: z.string().max(500).optional() }),
   z.object({ action: z.literal("time"), start: z.iso.datetime({ offset: true }) }),
   z.object({ action: z.literal("message"), text: z.string().min(1).max(2000) }),
+  z.object({ action: z.literal("upload_link") }),
 ]);
 
 export async function POST(request: Request, context: RouteContext<"/api/portal/[token]">) {
@@ -38,6 +40,10 @@ export async function POST(request: Request, context: RouteContext<"/api/portal/
       reason: data.action === "decline" ? data.reason : undefined,
     });
     return result.ok ? Response.json({ ok: true }) : Response.json({ error: result.error }, { status: 409 });
+  }
+  if (data.action === "upload_link") {
+    const link = await createUploadLink(admin, { workspaceId: portal.workspaceId, inquiryId: inquiry.id });
+    return Response.json({ token: link.split("/u/")[1] ?? "" });
   }
   if (data.action === "time") {
     const result = await requestTime(admin, {

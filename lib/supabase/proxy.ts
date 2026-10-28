@@ -40,6 +40,10 @@ const PUBLIC_PATHS = [
 ];
 
 function isPublicPath(pathname: string): boolean {
+  // Design previews with sample data; the route itself 404s in production.
+  if (process.env.NODE_ENV !== "production" && pathname.startsWith("/preview/")) {
+    return true;
+  }
   return PUBLIC_PATHS.some(
     (path) => pathname === path || pathname.startsWith(`${path}/`)
   );
