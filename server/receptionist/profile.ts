@@ -41,6 +41,15 @@ const service = z.object({
   price: z.string().trim().max(120).default(""),
 });
 
+export const priceItemSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  unit: z.enum(["stk", "time", "m2", "lm", "fast"]).default("stk"),
+  /** NOK, as the business quotes it (with or without VAT: see pricesIncludeVat). */
+  price: z.number().nonnegative().max(10_000_000),
+});
+
+export type PriceItem = z.infer<typeof priceItemSchema>;
+
 const faqEntry = z.object({
   q: z.string().trim().min(1).max(300),
   a: z.string().trim().min(1).max(1000),
@@ -95,12 +104,26 @@ export const profileInputSchema = z.object({
     .trim()
     .refine(isValidTimeZone, "IANA timezone")
     .default("Europe/Oslo"),
+  widgetEnabled: z.boolean().default(true),
+  widgetGreeting: z.string().trim().max(300).default(""),
+  widgetColor: z
+    .string()
+    .trim()
+    .transform((value) => (value === "" ? null : value))
+    .nullable()
+    .refine((value) => value === null || /^#[0-9a-fA-F]{6}$/.test(value), "#RRGGBB")
+    .default(null),
+  priceItems: z.array(priceItemSchema).max(60).default([]),
+  pricesIncludeVat: z.boolean().default(true),
+  quoteValidDays: z.number().int().min(1).max(365).default(30),
+  quoteTerms: z.string().trim().max(2000).default(""),
 });
 
 export type ProfileInput = z.infer<typeof profileInputSchema>;
 
 export type BusinessProfile = ProfileInput & {
   workspaceId: string;
+  widgetKey: string;
   calendarFeedToken: string;
   learnedFrom: string[];
   learnedAt: string | null;
@@ -132,6 +155,14 @@ export type ProfileRow = {
   buffer_minutes: number;
   min_notice_hours: number;
   timezone: string;
+  widget_key: string;
+  widget_enabled: boolean;
+  widget_greeting: string;
+  widget_color: string | null;
+  price_items: unknown;
+  prices_include_vat: boolean;
+  quote_valid_days: number;
+  quote_terms: string;
   calendar_feed_token: string;
   learned_from: unknown;
   learned_at: string | null;
@@ -143,13 +174,16 @@ export const PROFILE_COLUMNS =
   "address, service_area, contact_phone, contact_email, info_url, faq, " +
   "instructions, greeting, owner_phone, notify_sms, notify_email, sms_sender, " +
   "booking_enabled, appointment_minutes, buffer_minutes, min_notice_hours, " +
-  "timezone, calendar_feed_token, learned_from, learned_at, onboarded_at";
+  "timezone, widget_key, widget_enabled, widget_greeting, widget_color, " +
+  "price_items, prices_include_vat, quote_valid_days, quote_terms, " +
+  "calendar_feed_token, learned_from, learned_at, onboarded_at";
 
 /** A profile that has never been saved: the defaults, for one workspace. */
 export function emptyProfile(workspaceId: string, name = ""): BusinessProfile {
   return {
     ...profileInputSchema.parse({ name }),
     workspaceId,
+    widgetKey: "",
     calendarFeedToken: "",
     learnedFrom: [],
     learnedAt: null,
@@ -193,6 +227,14 @@ export function profileFromRow(row: ProfileRow): BusinessProfile {
     bufferMinutes: row.buffer_minutes,
     minNoticeHours: row.min_notice_hours,
     timezone: isValidTimeZone(row.timezone) ? row.timezone : "Europe/Oslo",
+    widgetKey: row.widget_key ?? "",
+    widgetEnabled: row.widget_enabled ?? true,
+    widgetGreeting: row.widget_greeting ?? "",
+    widgetColor: row.widget_color ?? null,
+    priceItems: loose(z.array(priceItemSchema), row.price_items, []),
+    pricesIncludeVat: row.prices_include_vat ?? true,
+    quoteValidDays: row.quote_valid_days ?? 30,
+    quoteTerms: row.quote_terms ?? "",
     calendarFeedToken: row.calendar_feed_token,
     learnedFrom: loose(z.array(z.string()), row.learned_from, []),
     learnedAt: row.learned_at,
@@ -202,7 +244,7 @@ export function profileFromRow(row: ProfileRow): BusinessProfile {
 
 export function profileToRow(input: ProfileInput): Omit<
   ProfileRow,
-  "workspace_id" | "calendar_feed_token" | "learned_from" | "learned_at" | "onboarded_at"
+  "workspace_id" | "widget_key" | "calendar_feed_token" | "learned_from" | "learned_at" | "onboarded_at"
 > {
   return {
     name: input.name,
@@ -228,6 +270,13 @@ export function profileToRow(input: ProfileInput): Omit<
     buffer_minutes: input.bufferMinutes,
     min_notice_hours: input.minNoticeHours,
     timezone: input.timezone,
+    widget_enabled: input.widgetEnabled,
+    widget_greeting: input.widgetGreeting,
+    widget_color: input.widgetColor,
+    price_items: input.priceItems,
+    prices_include_vat: input.pricesIncludeVat,
+    quote_valid_days: input.quoteValidDays,
+    quote_terms: input.quoteTerms,
   };
 }
 

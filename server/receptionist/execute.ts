@@ -3,14 +3,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { errorFields, logger } from "@/lib/logger";
 import { createCalendarEvent, findCalendarAccount } from "@/server/calendar/google";
 
-import {
-  bookingPayloadSchema,
-  callbackPayloadSchema,
-  replyPayloadSchema,
-  smsPayloadSchema,
-  UPLOAD_LINK_PLACEHOLDER,
-  type BookingPayload,
-} from "./intake";
+import { sendCustomerEmail, type EmailOutcome } from "./customer-email";
+import { PAYLOAD_SCHEMAS, UPLOAD_LINK_PLACEHOLDER, type BookingPayload } from "./intake";
+import { ensurePortal, portalUrl, withPortalLink } from "./portal";
+import { createQuote, type QuotePayload } from "./quotes";
+import { readTwilioConfig } from "@/server/telephony/twilio";
 import { normalizePhone } from "./profile";
 import { isBookable } from "./slots";
 import { sendLoggedSms, type SendOutcome } from "./sms";
@@ -61,12 +58,7 @@ export async function decideAction(
     return dismissed ? { ok: true, action: dismissed } : { ok: false, reason: "already_decided" };
   }
 
-  const schema = {
-    booking: bookingPayloadSchema,
-    sms: smsPayloadSchema,
-    reply: replyPayloadSchema,
-    callback: callbackPayloadSchema,
-  }[action.kind];
+  const schema = PAYLOAD_SCHEMAS[action.kind];
   const parsed = schema.safeParse(decision.payload ?? action.payload);
   if (!parsed.success) {
     return { ok: false, reason: "invalid", message: parsed.error.issues[0]?.message };
@@ -75,6 +67,7 @@ export async function decideAction(
 
   // Phone numbers are normalised once, here, so what is stored is what is dialled.
   for (const key of ["to", "customerPhone", "phone"] as const) {
+    if (payload[key] === null || payload[key] === "") continue;
     if (typeof payload[key] === "string") {
       const normalized = normalizePhone(payload[key] as string);
       if (!normalized) return { ok: false, reason: "invalid", message: "Ugyldig telefonnummer" };
@@ -149,6 +142,72 @@ function smsOutcome(result: SendOutcome): Outcome {
   }
 }
 
+function emailOutcome(result: EmailOutcome): Outcome {
+  switch (result.kind) {
+    case "sent":
+      return { status: "done", result: { emailId: result.id } };
+    case "refused":
+      return { status: "failed", result: {}, error: result.message };
+    case "unconfigured":
+      return { status: "failed", result: {}, error: result.reason };
+    case "unknown":
+      return { status: "unknown", result: {}, error: result.message };
+  }
+}
+
+/**
+ * One message to the customer, by the best channel available: SMS to a
+ * phone when SMS is configured, otherwise email. The customer page link goes
+ * with it, so every reply lands somewhere the customer can act.
+ */
+async function messageCustomer(
+  admin: SupabaseClient,
+  input: {
+    action: InquiryAction;
+    profile: Awaited<ReturnType<typeof loadProfile>>;
+    to: string | null;
+    email: string | null;
+    subject: string;
+    body: string;
+    linkLabel: string;
+  }
+): Promise<Outcome> {
+  const token = await ensurePortal(admin, {
+    workspaceId: input.action.workspaceId,
+    inquiryId: input.action.inquiryId,
+  });
+  const url = portalUrl(token);
+
+  if (input.to && readTwilioConfig()) {
+    const result = await sendLoggedSms(admin, {
+      profile: input.profile,
+      to: input.to,
+      body: withPortalLink(input.body, url),
+      audience: "customer",
+      inquiryId: input.action.inquiryId,
+      actionId: input.action.id,
+    });
+    return smsOutcome(result);
+  }
+  if (input.email) {
+    const result = await sendCustomerEmail(admin, {
+      profile: input.profile,
+      to: input.email,
+      subject: input.subject,
+      body: input.body,
+      link: { url, label: input.linkLabel },
+      inquiryId: input.action.inquiryId,
+      actionId: input.action.id,
+    });
+    return emailOutcome(result);
+  }
+  return {
+    status: "failed",
+    result: {},
+    error: input.to ? "SMS er ikke satt opp, og kunden har ingen e-postadresse." : "Ingen telefon eller e-post.",
+  };
+}
+
 async function execute(admin: SupabaseClient, action: InquiryAction): Promise<Outcome> {
   const profile = await loadProfile(admin, action.workspaceId);
 
@@ -158,7 +217,12 @@ async function execute(admin: SupabaseClient, action: InquiryAction): Promise<Ou
   }
 
   if (action.kind === "sms" || action.kind === "reply") {
-    const payload = action.payload as { to: string; body: string; includeUploadLink?: boolean };
+    const payload = action.payload as {
+      to: string | null;
+      email: string | null;
+      body: string;
+      includeUploadLink?: boolean;
+    };
     let body = payload.body;
     if (payload.includeUploadLink) {
       const link = await createUploadLink(admin, {
@@ -169,15 +233,44 @@ async function execute(admin: SupabaseClient, action: InquiryAction): Promise<Ou
         ? body.replace(UPLOAD_LINK_PLACEHOLDER, link)
         : `${body}\n${link}`;
     }
-    const result = await sendLoggedSms(admin, {
+    return messageCustomer(admin, {
+      action,
       profile,
       to: payload.to,
+      email: payload.email,
+      subject: `Svar fra ${profile.name || "oss"}`,
       body,
-      audience: "customer",
+      linkLabel: "Se saken din",
+    });
+  }
+
+  if (action.kind === "quote") {
+    const payload = action.payload as QuotePayload;
+    const quote = await createQuote(admin, {
+      profile,
       inquiryId: action.inquiryId,
       actionId: action.id,
+      payload,
+      userId: action.decidedBy,
     });
-    return smsOutcome(result);
+    const total = Math.round(quote.total).toLocaleString("nb-NO");
+    const first = payload.customerName.trim().split(/\s+/)[0];
+    const message = await messageCustomer(admin, {
+      action,
+      profile,
+      to: payload.customerPhone,
+      email: payload.customerEmail,
+      subject: `Tilbud ${quote.number} fra ${profile.name || "oss"}: ${quote.title}`,
+      body: `${first ? `Hei ${first}!` : "Hei!"} Her er tilbudet på ${quote.title.toLowerCase()}: ${total} kr ${quote.pricesIncludeVat ? "inkl." : "eks."} mva. Du kan se detaljene og godta det på siden din.${profile.name ? `\n\nHilsen ${profile.name}` : ""}`,
+      linkLabel: "Se og godta tilbudet",
+    });
+    // The quote stands even if the message did not go: the owner can share
+    // the customer page by hand.
+    return {
+      status: message.status === "done" ? "done" : message.status,
+      result: { ...message.result, quoteId: quote.id, quoteNumber: quote.number },
+      error: message.error ? `Tilbudet er laget, men meldingen: ${message.error}` : undefined,
+    };
   }
 
   // Booking: ours first, then the calendar, then the customer's confirmation.

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { receptionistModel } from "@/agent/lib/models";
 
 import { normalizePhone, type BusinessProfile } from "./profile";
+import { groundLines, quotePayloadSchema, quoteTotals, type QuotePayload } from "./quotes";
 import type { Interval } from "./slots";
 import { describeLocal } from "./time";
 
@@ -42,6 +43,18 @@ export const intakeSchema = z.object({
   wantsPhotoLink: z.boolean().describe("True if photos would help, or the caller agreed to receive an upload link."),
   wantsInfoLink: z.boolean().describe("True if the caller asked for more information or a link to read more."),
   openQuestions: z.array(z.string()).max(5).describe("Questions only the owner can answer."),
+  quoteLines: z
+    .array(
+      z.object({
+        description: z.string().describe("What this line covers, in Norwegian, for the customer."),
+        quantity: z.number().describe("Best estimate from what the customer said; 1 if unsure."),
+        priceItem: z.string().describe("The exact name of an item from the business's price list."),
+      })
+    )
+    .max(10)
+    .describe(
+      "A draft quote using ONLY items from the price list, by exact name. Empty if the list does not cover the job or too little is known."
+    ),
   suggestedReply: z
     .string()
     .describe(
@@ -56,7 +69,7 @@ export async function extractIntake(input: {
   profile: BusinessProfile;
   offeredSlots: Interval[];
   now: Date;
-  channel: "phone" | "voicemail" | "sms";
+  channel: "phone" | "voicemail" | "sms" | "web";
 }): Promise<Intake> {
   const tz = input.profile.timezone;
   const offered = input.offeredSlots.map((slot) => `- ${slot.start.toISOString()} (${describeLocal(slot.start, tz)})`);
@@ -65,11 +78,16 @@ export async function extractIntake(input: {
     model: receptionistModel(),
     schema: intakeSchema,
     system: [
-      `You read a ${input.channel === "sms" ? "text message conversation" : input.channel === "voicemail" ? "voicemail" : "phone call"} between a caller and the AI receptionist of a small Norwegian business, and fill in the intake the owner will act on.`,
+      `You read a ${input.channel === "sms" ? "text message conversation" : input.channel === "voicemail" ? "voicemail" : input.channel === "web" ? "website chat" : "phone call"} between a caller and the AI receptionist of a small Norwegian business, and fill in the intake the owner will act on.`,
       "Use only what was said. Do not invent names, addresses, times or prices.",
       `The business: ${input.profile.name || "unknown"}. ${input.profile.summary}`,
       `It is now ${input.now.toISOString()} (${describeLocal(input.now, tz)}, timezone ${tz}).`,
       offered.length ? `Times the receptionist could offer:\n${offered.join("\n")}` : "No times were offered.",
+      input.profile.priceItems.length
+        ? `The business's price list (${input.profile.pricesIncludeVat ? "incl." : "excl."} VAT):\n${input.profile.priceItems
+            .map((item) => `- ${item.name}: ${item.price} kr per ${item.unit}`)
+            .join("\n")}`
+        : "The business has no price list: leave quoteLines empty.",
     ].join("\n"),
     prompt: input.transcript,
   });
@@ -92,14 +110,27 @@ export const bookingPayloadSchema = z.object({
   confirmationSms: z.string().trim().max(600).nullable().default(null),
 });
 
-export const smsPayloadSchema = z.object({
-  to: z.string().trim().min(8).max(20),
-  body: z.string().trim().min(1).max(600),
-  /** Appends a fresh photo-upload link to the message when it is sent. */
-  includeUploadLink: z.boolean().default(false),
-});
+/**
+ * A message to the customer: SMS when there is a phone number and SMS is
+ * configured, otherwise email. At least one address is required.
+ */
+const messageFields = {
+  to: z.string().trim().min(8).max(20).nullable().default(null),
+  email: z.email().nullable().default(null),
+  body: z.string().trim().min(1).max(1200),
+};
 
-export const replyPayloadSchema = smsPayloadSchema.omit({ includeUploadLink: true });
+export const smsPayloadSchema = z
+  .object({
+    ...messageFields,
+    /** Appends a fresh photo-upload link to the message when it is sent. */
+    includeUploadLink: z.boolean().default(false),
+  })
+  .refine((value) => value.to || value.email, "to or email");
+
+export const replyPayloadSchema = z
+  .object(messageFields)
+  .refine((value) => value.to || value.email, "to or email");
 
 export const callbackPayloadSchema = z.object({
   phone: z.string().trim().min(8).max(20),
@@ -115,9 +146,11 @@ export const PAYLOAD_SCHEMAS = {
   sms: smsPayloadSchema,
   reply: replyPayloadSchema,
   callback: callbackPayloadSchema,
+  quote: quotePayloadSchema,
 } as const;
 
 export type Proposal =
+  | { kind: "quote"; payload: QuotePayload; rationale: string }
   | { kind: "booking"; payload: BookingPayload; rationale: string }
   | { kind: "sms"; payload: SmsPayload; rationale: string }
   | { kind: "reply"; payload: ReplyPayload; rationale: string }
@@ -144,6 +177,8 @@ export function proposeActions(input: {
   intake: Intake;
   profile: BusinessProfile;
   callerPhone: string | null;
+  callerEmail?: string | null;
+  channel?: "phone" | "voicemail" | "sms" | "web";
   freeSlots: Interval[];
   now: Date;
 }): Proposal[] {
@@ -152,6 +187,8 @@ export function proposeActions(input: {
 
   const phone =
     normalizePhone(intake.callbackNumber ?? "") ?? normalizePhone(input.callerPhone ?? "") ?? null;
+  const emailParsed = z.email().safeParse((input.callerEmail ?? intake.callerEmail ?? "").trim());
+  const email = emailParsed.success ? emailParsed.data : null;
   const hello = firstName(intake.callerName) ? `Hei ${firstName(intake.callerName)}!` : "Hei!";
   const proposals: Proposal[] = [];
 
@@ -164,9 +201,31 @@ export function proposeActions(input: {
     });
   }
 
-  if (!phone) return proposals;
+  // A quote first: it is what the customer came for when they asked "what
+  // does it cost", and the owner's price list is the only source of prices.
+  const lines = groundLines(intake.quoteLines ?? [], profile.priceItems);
+  if (lines.length > 0 && (phone || email)) {
+    const totals = quoteTotals(lines, profile.pricesIncludeVat);
+    proposals.push({
+      kind: "quote",
+      payload: {
+        title: intake.title.slice(0, 200) || "Tilbud",
+        lines,
+        notes: intake.openQuestions.length
+          ? `Forutsetninger: ${intake.openQuestions.join("; ")}`
+          : "",
+        customerName: intake.callerName ?? "",
+        customerEmail: email,
+        customerPhone: phone,
+        validDays: profile.quoteValidDays,
+      },
+      rationale: `Beregnet fra prislisten din: ${Math.round(totals.total).toLocaleString("nb-NO")} kr ${profile.pricesIncludeVat ? "inkl." : "eks."} mva. Juster før du sender.`,
+    });
+  }
 
-  if (profile.bookingEnabled && intake.wantsAppointment) {
+  if (!phone && !email) return proposals;
+
+  if (phone && profile.bookingEnabled && intake.wantsAppointment) {
     const agreed = parseFuture(intake.agreedSlot, input.now);
     const start = agreed ?? input.freeSlots[0]?.start ?? null;
     if (start) {
@@ -192,32 +251,36 @@ export function proposeActions(input: {
   }
 
   const infoUrl = intake.wantsInfoLink ? (profile.infoUrl ?? profile.websiteUrl) : null;
-  if (intake.wantsPhotoLink || infoUrl) {
-    const lines = [hello];
-    if (intake.wantsPhotoLink) {
-      lines.push(`Her kan du laste opp bilder, så ser vi på det før vi tar kontakt: ${UPLOAD_LINK_PLACEHOLDER}`);
+  // A web customer already uploaded photos in the chat; asking again is noise.
+  const wantsPhotos = intake.wantsPhotoLink && input.channel !== "web";
+  if (wantsPhotos || infoUrl) {
+    const textLines = [hello];
+    if (wantsPhotos) {
+      textLines.push(`Her kan du laste opp bilder, så ser vi på det før vi tar kontakt: ${UPLOAD_LINK_PLACEHOLDER}`);
     }
-    if (infoUrl) lines.push(`Mer informasjon: ${infoUrl}`);
+    if (infoUrl) textLines.push(`Mer informasjon: ${infoUrl}`);
     proposals.push({
       kind: "sms",
       payload: {
         to: phone,
-        body: lines.join("\n") + signature(profile),
-        includeUploadLink: intake.wantsPhotoLink,
+        email: phone ? null : email,
+        body: textLines.join("\n") + signature(profile),
+        includeUploadLink: wantsPhotos,
       },
-      rationale: intake.wantsPhotoLink
+      rationale: wantsPhotos
         ? "Bilder gjør det lettere å vurdere jobben før du ringer."
         : "Innringeren ville lese mer.",
     });
   }
 
   const reply = intake.suggestedReply.trim();
-  const covered = proposals.some((proposal) => proposal.kind === "booking");
+  const covered = proposals.some((proposal) => proposal.kind === "booking" || proposal.kind === "quote");
   if (reply && !covered) {
     proposals.push({
       kind: "reply",
       payload: {
         to: phone,
+        email: phone ? null : email,
         body: reply.includes(profile.name) || !profile.name ? reply : `${reply}${signature(profile)}`,
       },
       rationale: intake.openQuestions.length

@@ -22,7 +22,19 @@ export type EmailPayload = {
   subject: string;
   html: string;
   text: string;
+  /** Replies go here instead of to the sender: the business, not Humanframe. */
+  replyTo?: string;
+  /** Overrides the configured sender's display name, keeping its address. */
+  fromName?: string;
 };
+
+/** "Hansen Rør <varsel@x.no>" from a configured "Maya <varsel@x.no>". */
+export function withDisplayName(from: string, name: string | undefined): string {
+  if (!name) return from;
+  const address = /<([^>]+)>/.exec(from)?.[1] ?? from.trim();
+  const safe = name.replace(/["<>\r\n]/g, "").slice(0, 80);
+  return `"${safe}" <${address}>`;
+}
 
 export type SendResult =
   /** Resend accepted it. */
@@ -90,11 +102,12 @@ export async function sendEmail(input: {
         "Idempotency-Key": input.idempotencyKey.slice(0, 256),
       },
       body: JSON.stringify({
-        from: input.config.from,
+        from: withDisplayName(input.config.from, input.payload.fromName),
         to: [input.payload.to],
         subject: input.payload.subject,
         html: input.payload.html,
         text: input.payload.text,
+        ...(input.payload.replyTo ? { reply_to: input.payload.replyTo } : {}),
       }),
       signal: input.signal,
     });

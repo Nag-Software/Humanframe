@@ -28,6 +28,15 @@ const PUBLIC_PATHS = [
   "/u",
   "/api/public",
   "/api/calendar/feed",
+  // The website widget (/widget.js, /w/<key>, /api/widget) and the customer
+  // page (/k/<token>, /api/portal) are used by the business's customers, who
+  // have no account. The widget key names a widget; the portal token is the
+  // customer's credential for one inquiry.
+  "/widget.js",
+  "/w",
+  "/api/widget",
+  "/k",
+  "/api/portal",
 ];
 
 function isPublicPath(pathname: string): boolean {

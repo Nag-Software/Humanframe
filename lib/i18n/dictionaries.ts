@@ -212,9 +212,11 @@ export const en = {
   },
   receptionist: {
     nav: {
-      inbox: "Inquiries",
+      work: "Work",
+      inbox: "Requests",
+      quotes: "Quotes",
       setup: "Setup",
-      reports: "Reports",
+      reports: "Report",
     },
     inbox: {
       metaTitle: "Inquiries",
@@ -788,9 +790,11 @@ export const no: Dictionary = {
   },
   receptionist: {
     nav: {
-      inbox: "Henvendelser",
+      work: "Arbeid",
+      inbox: "Forespørsler",
+      quotes: "Tilbud",
       setup: "Oppsett",
-      reports: "Rapporter",
+      reports: "Rapport",
     },
     inbox: {
       metaTitle: "Henvendelser",

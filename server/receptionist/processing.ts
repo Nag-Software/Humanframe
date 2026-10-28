@@ -7,6 +7,7 @@ import { transcribeRecording } from "@/server/telephony/transcribe";
 import { loadAvailability } from "./availability";
 import { extractIntake, proposeActions, type Intake, type Proposal } from "./intake";
 import { notifyOwner } from "./notify";
+import { ensurePortal } from "./portal";
 import type { BusinessProfile } from "./profile";
 import { loadProfile, toInquiry, type Inquiry, type InquiryRow } from "./store";
 
@@ -83,6 +84,8 @@ async function runPipeline(admin: SupabaseClient, inquiry: Inquiry, attempt: num
     intake,
     profile,
     callerPhone: inquiry.callerPhone,
+    callerEmail: inquiry.callerEmail,
+    channel: inquiry.channel,
     freeSlots: availability.slots,
     now,
   });
@@ -99,6 +102,8 @@ async function runPipeline(admin: SupabaseClient, inquiry: Inquiry, attempt: num
   if (!held) return;
 
   await saveProposals(admin, inquiry, proposals);
+  // Every inquiry gets a customer page, so the owner can share it at once.
+  await ensurePortal(admin, { workspaceId: inquiry.workspaceId, inquiryId: inquiry.id });
 
   const { data: updated, error } = await admin
     .from("inquiries")
@@ -187,6 +192,7 @@ export function silentCallIntake(profile: BusinessProfile): Intake {
     wantsPhotoLink: false,
     wantsInfoLink: false,
     openQuestions: [],
+    quoteLines: [],
     suggestedReply: `Hei! Vi så at du ringte ${name}. Hva kan vi hjelpe deg med? Svar gjerne her, så tar vi kontakt.`,
   };
 }

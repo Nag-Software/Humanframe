@@ -33,10 +33,17 @@ export type WeekStats = {
   openNow: number;
   minutes: number;
   topTitles: string[];
+  /** Requests sent from the website widget. */
+  webRequests: number;
+  quotesSent: number;
+  quotesAccepted: number;
+  /** Kroner, as quoted (VAT included when the business quotes with VAT). */
+  quotedValue: number;
+  acceptedValue: number;
 };
 
 export type ReportInquiry = {
-  channel: "phone" | "voicemail" | "sms";
+  channel: "phone" | "voicemail" | "sms" | "web";
   status: "open" | "handled" | "dismissed";
   title: string;
   urgency: "low" | "normal" | "high";
@@ -45,6 +52,7 @@ export type ReportInquiry = {
 };
 
 export type ReportAction = { kind: string; status: string };
+export type ReportQuote = { status: string; total: number };
 
 /** Pure: the week's rows, counted. */
 export function computeWeekStats(input: {
@@ -52,8 +60,11 @@ export function computeWeekStats(input: {
   inquiries: ReportInquiry[];
   actions: ReportAction[];
   customerSmsSent: number;
+  quotes?: ReportQuote[];
 }): WeekStats {
-  const calls = input.inquiries.filter((row) => row.channel !== "sms");
+  const calls = input.inquiries.filter((row) => row.channel === "phone" || row.channel === "voicemail");
+  const quotes = input.quotes ?? [];
+  const accepted = quotes.filter((quote) => quote.status === "accepted");
   const silent = calls.filter((row) => !row.transcript.trim()).length;
   const done = (kind: string) =>
     input.actions.filter((action) => action.kind === kind && action.status === "done").length;
@@ -75,6 +86,11 @@ export function computeWeekStats(input: {
       .filter((row) => row.title && row.status !== "dismissed")
       .map((row) => row.title)
       .slice(0, 5),
+    webRequests: input.inquiries.filter((row) => row.channel === "web").length,
+    quotesSent: quotes.length,
+    quotesAccepted: accepted.length,
+    quotedValue: Math.round(quotes.reduce((sum, quote) => sum + quote.total, 0)),
+    acceptedValue: Math.round(accepted.reduce((sum, quote) => sum + quote.total, 0)),
   };
 }
 
@@ -95,17 +111,26 @@ export function previousWeek(now: Date, timeZone: string): { start: Date; end: D
 
 /** Pure: the email body. Plain words first; the numbers carry the argument. */
 export function renderReport(stats: WeekStats, businessName: string): { subject: string; text: string; html: string } {
-  const caught = stats.answeredByAi + stats.voicemails + stats.smsInquiries;
+  const caught = stats.answeredByAi + stats.voicemails + stats.smsInquiries + (stats.webRequests ?? 0);
+  const kroner = (value: number) => `${Math.round(value).toLocaleString("nb-NO")} kr`;
   const subject =
-    caught > 0
-      ? `${caught} henvendelser som ellers kunne gått tapt – uke ${weekNumber(stats.weekStart)}`
-      : `Ukesrapport – uke ${weekNumber(stats.weekStart)}`;
+    stats.acceptedValue > 0
+      ? `${kroner(stats.acceptedValue)} i godtatte tilbud – uke ${weekNumber(stats.weekStart)}`
+      : caught > 0
+        ? `${caught} forespørsler – uke ${weekNumber(stats.weekStart)}`
+        : `Ukesrapport – uke ${weekNumber(stats.weekStart)}`;
 
   const lines = [
     `Uken som gikk for ${businessName || "bedriften"}:`,
     "",
-    `${stats.calls} anrop ble satt over fordi ingen kunne svare.`,
-    `${stats.answeredByAi} ble besvart av resepsjonisten, ${stats.voicemails} la igjen beskjed${stats.silent ? `, ${stats.silent} la på før noe ble sagt` : ""}.`,
+    stats.webRequests ? `${stats.webRequests} forespørsler kom fra nettsiden.` : null,
+    stats.quotesSent
+      ? `${stats.quotesSent} tilbud sendt for ${kroner(stats.quotedValue)}, ${stats.quotesAccepted} godtatt for ${kroner(stats.acceptedValue)}.`
+      : null,
+    stats.calls ? `${stats.calls} anrop ble satt over fordi ingen kunne svare.` : null,
+    stats.calls
+      ? `${stats.answeredByAi} ble besvart av resepsjonisten, ${stats.voicemails} la igjen beskjed${stats.silent ? `, ${stats.silent} la på før noe ble sagt` : ""}.`
+      : null,
     stats.smsInquiries ? `${stats.smsInquiries} henvendelser kom på SMS.` : null,
     `${stats.bookings} timer ble booket, og ${stats.repliesSent} svar ble sendt på SMS.`,
     stats.urgent ? `${stats.urgent} var merket som haster.` : null,
@@ -118,8 +143,8 @@ export function renderReport(stats: WeekStats, businessName: string): { subject:
   const url = `${appOrigin() ?? "http://localhost:3000"}/reports`;
   const text = [...lines, "", url].join("\n");
   const html = `<div style="font-family:system-ui,sans-serif;line-height:1.5;color:#111">
-<p style="font-size:28px;font-weight:600;margin:0 0 8px">${caught}</p>
-<p style="margin:0 0 16px;color:#555">henvendelser som ellers kunne gått tapt</p>
+<p style="font-family:Georgia,serif;font-size:34px;margin:0 0 6px">${stats.acceptedValue > 0 ? kroner(stats.acceptedValue) : caught}</p>
+<p style="margin:0 0 16px;color:#6B655B">${stats.acceptedValue > 0 ? "i godtatte tilbud" : "forespørsler"}</p>
 ${lines.map((line) => (line ? `<p style="margin:0 0 6px">${escapeHtml(line)}</p>` : "<br>")).join("\n")}
 <p style="margin-top:16px"><a href="${escapeHtml(url)}">Se rapporten</a></p>
 </div>`;
@@ -139,11 +164,12 @@ export async function buildWeekStats(
   profile: BusinessProfile,
   week: { start: Date; end: Date; label: string }
 ): Promise<WeekStats> {
-  const [{ data: inquiries }, { count: smsCount }] = await Promise.all([
+  const [{ data: inquiries }, { count: smsCount }, { data: quoteRows }] = await Promise.all([
     admin
       .from("inquiries")
       .select("id, channel, status, title, urgency, duration_seconds, transcript")
       .eq("workspace_id", profile.workspaceId)
+      .neq("status", "draft")
       .gte("started_at", week.start.toISOString())
       .lt("started_at", week.end.toISOString())
       .order("started_at", { ascending: false })
@@ -166,6 +192,13 @@ export async function buildWeekStats(
       .eq("audience", "customer")
       .gte("created_at", week.start.toISOString())
       .lt("created_at", week.end.toISOString()),
+    admin
+      .from("quotes")
+      .select("status, total")
+      .eq("workspace_id", profile.workspaceId)
+      .gte("sent_at", week.start.toISOString())
+      .lt("sent_at", week.end.toISOString())
+      .returns<{ status: string; total: number | string }[]>(),
   ]);
 
   const ids = (inquiries ?? []).map((row) => row.id);
@@ -185,6 +218,7 @@ export async function buildWeekStats(
     })),
     actions: actions ?? [],
     customerSmsSent: smsCount ?? 0,
+    quotes: (quoteRows ?? []).map((row) => ({ status: row.status, total: Number(row.total) })),
   });
 }
 
@@ -212,7 +246,7 @@ export async function sendWeeklyReport(
     throw new Error("Could not store the weekly report");
   }
 
-  if (stats.calls + stats.smsInquiries === 0) return "empty";
+  if (stats.calls + stats.smsInquiries + stats.webRequests + stats.quotesSent === 0) return "empty";
 
   const config = readEmailConfig();
   if (!config?.enabled) return "stored";

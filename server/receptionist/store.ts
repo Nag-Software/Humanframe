@@ -310,7 +310,7 @@ export async function callerHistory(
 // Actions
 // ---------------------------------------------------------------------------
 
-export type ActionKind = "booking" | "sms" | "reply" | "callback";
+export type ActionKind = "booking" | "sms" | "reply" | "callback" | "quote";
 export type ActionStatus =
   | "proposed"
   | "approved"
@@ -330,6 +330,7 @@ export type InquiryAction = {
   rationale: string;
   result: Record<string, unknown> | null;
   error: string | null;
+  decidedBy: string | null;
   decidedAt: string | null;
   executedAt: string | null;
   createdAt: string;
@@ -345,6 +346,7 @@ type ActionRow = {
   rationale: string;
   result: Record<string, unknown> | null;
   error: string | null;
+  decided_by: string | null;
   decided_at: string | null;
   executed_at: string | null;
   created_at: string;
@@ -352,7 +354,7 @@ type ActionRow = {
 
 export const ACTION_COLUMNS =
   "id, workspace_id, inquiry_id, kind, status, payload, rationale, result, " +
-  "error, decided_at, executed_at, created_at";
+  "error, decided_by, decided_at, executed_at, created_at";
 
 export function toAction(row: ActionRow): InquiryAction {
   return {
@@ -365,6 +367,7 @@ export function toAction(row: ActionRow): InquiryAction {
     rationale: row.rationale,
     result: row.result,
     error: row.error,
+    decidedBy: row.decided_by,
     decidedAt: row.decided_at,
     executedAt: row.executed_at,
     createdAt: row.created_at,

@@ -209,6 +209,14 @@ const weekdays = {
     buffer_minutes: 0,
     min_notice_hours: 2,
     timezone: "Mars/Olympus",
+    widget_key: "k",
+    widget_enabled: true,
+    widget_greeting: "",
+    widget_color: null,
+    price_items: [{ name: "x", unit: "bad", price: -1 }],
+    prices_include_vat: true,
+    quote_valid_days: 30,
+    quote_terms: "",
     calendar_feed_token: "t",
     learned_from: [],
     learned_at: null,
@@ -361,6 +369,7 @@ const baseIntake = {
   wantsPhotoLink: true,
   wantsInfoLink: false,
   openQuestions: [],
+  quoteLines: [] as { description: string; quantity: number; priceItem: string }[],
   suggestedReply: "Takk for samtalen!",
 };
 
@@ -626,7 +635,7 @@ const baseIntake = {
   );
   check("report: dismissed titles are not listed", !stats.topTitles.includes("Reklame"));
   const email = renderReport(stats, "Hansen Rør");
-  check("report: the subject leads with what was caught", email.subject.startsWith("3 henvendelser"), email.subject);
+  check("report: the subject leads with what was caught", email.subject.startsWith("3 forespørsler"), email.subject);
   check("report: the body links to the reports page", email.text.includes("https://app.humanframe.test/reports"));
 }
 
@@ -654,6 +663,122 @@ const baseIntake = {
   check("format: datetime-local in the business's zone", local === "2026-10-29T08:00", local);
   check("format: and back", fromLocalInput(local, OSLO) === "2026-10-29T07:00:00.000Z", fromLocalInput(local, OSLO));
   check("format: summer and back", fromLocalInput("2026-07-01T09:30", OSLO) === "2026-07-01T07:30:00.000Z");
+}
+
+// ---------------------------------------------------------------------------
+// Web: quotes, widget, customer page
+// ---------------------------------------------------------------------------
+
+{
+  const { quoteTotals, groundLines } = await import("../server/receptionist/quotes.ts");
+  const { canSubmit, buildWebInstructions, formatTranscript, EMPTY_COLLECTED } = await import("../server/widget/conversation.ts");
+  const { mergeCollected } = await import("../server/widget/sessions.ts");
+  const { withPortalLink } = await import("../server/receptionist/portal.ts");
+  const { withDisplayName } = await import("../agent/lib/email.ts");
+  const { renderCustomerEmail } = await import("../server/receptionist/customer-email.ts");
+
+  const incl = quoteTotals([{ description: "Arbeid", quantity: 2, unit: "time", unitPrice: 1250 }], true);
+  check("quotes: prices incl. VAT — total is the sum, VAT a fifth", incl.total === 2500 && incl.vat === 500 && incl.subtotal === 2000, incl);
+  const excl = quoteTotals([{ description: "Arbeid", quantity: 2, unit: "time", unitPrice: 1000 }], false);
+  check("quotes: prices excl. VAT — 25 % on top", excl.subtotal === 2000 && excl.vat === 500 && excl.total === 2500, excl);
+
+  const priceItems = [
+    { name: "Timepris", unit: "time" as const, price: 950 },
+    { name: "Oppmøte", unit: "fast" as const, price: 690 },
+  ];
+  const grounded = groundLines(
+    [
+      { description: "Feilsøking", quantity: 2, priceItem: "timepris" },
+      { description: "Oppmøte", quantity: 1, priceItem: "Oppmøte" },
+      { description: "Nytt blandebatteri", quantity: 1, priceItem: "Blandebatteri" },
+    ],
+    priceItems
+  );
+  check(
+    "quotes: only the owner's prices survive, units from the list",
+    grounded.length === 2 && grounded[0].unitPrice === 950 && grounded[0].unit === "time" && grounded[1].unitPrice === 690,
+    grounded
+  );
+
+  const priced = { ...profile, priceItems };
+  const now = new Date("2026-10-28T13:00:00Z");
+  const quoteIntake = {
+    ...baseIntake,
+    wantsAppointment: false,
+    wantsPhotoLink: false,
+    category: "quote" as const,
+    quoteLines: [{ description: "Feilsøking", quantity: 2, priceItem: "Timepris" }],
+  };
+  const withQuote = proposeActions({ intake: quoteIntake, profile: priced, callerPhone: null, callerEmail: "ola@example.no", channel: "web", freeSlots: [], now });
+  const quote = withQuote.find((proposal) => proposal.kind === "quote");
+  check(
+    "proposals: a priced quote for an email-only web customer, and no duplicate reply",
+    quote?.kind === "quote" && quote.payload.customerEmail === "ola@example.no" && quote.payload.lines[0].unitPrice === 950 &&
+      !withQuote.some((proposal) => proposal.kind === "reply"),
+    withQuote
+  );
+  const unpriced = proposeActions({ intake: quoteIntake, profile, callerPhone: "+4791234567", freeSlots: [], now });
+  check("proposals: no price list, no quote", !unpriced.some((proposal) => proposal.kind === "quote"));
+  const webPhotos = proposeActions({
+    intake: { ...baseIntake, wantsAppointment: false },
+    profile,
+    callerPhone: "+4791234567",
+    channel: "web",
+    freeSlots: [],
+    now,
+  });
+  check("proposals: no photo-link SMS for a web customer who could attach in the chat", !webPhotos.some((proposal) => proposal.kind === "sms"));
+  const emailReply = proposeActions({
+    intake: { ...baseIntake, wantsAppointment: false, wantsPhotoLink: false },
+    profile,
+    callerPhone: null,
+    callerEmail: "kari@example.no",
+    channel: "web",
+    freeSlots: [],
+    now,
+  });
+  check(
+    "proposals: an email-only customer gets an email reply",
+    emailReply[0]?.kind === "reply" && emailReply[0].payload.email === "kari@example.no" && emailReply[0].payload.to === null,
+    emailReply
+  );
+
+  check("widget: cannot send without a name", !canSubmit({ ...EMPTY_COLLECTED, job: "Lekkasje", phone: "91234567" }));
+  check("widget: cannot send without contact", !canSubmit({ ...EMPTY_COLLECTED, job: "Lekkasje", name: "Ola" }));
+  check("widget: job, name and email is enough", canSubmit({ ...EMPTY_COLLECTED, job: "Lekkasje", name: "Ola", email: "o@x.no" }));
+  const merged = mergeCollected(
+    { ...EMPTY_COLLECTED, name: "Ola", phone: "91234567" },
+    { ...EMPTY_COLLECTED, name: null, phone: "", job: "Lekkasje" }
+  );
+  check("widget: a later turn never erases what the customer gave", merged.name === "Ola" && merged.phone === "91234567" && merged.job === "Lekkasje");
+  const webPrompt = buildWebInstructions({ profile: priced, now, slots: [], photos: 2, collected: EMPTY_COLLECTED });
+  check(
+    "widget: the prompt asks for photos, carries the price list and never promises totals",
+    webPrompt.includes("binders-knappen") && webPrompt.includes("Timepris: 950 kr") && webPrompt.includes("Lov aldri en totalpris") && webPrompt.includes("Bilder lagt ved så langt: 2")
+  );
+  check(
+    "widget: transcript notes the photos",
+    formatTranscript([{ role: "user", content: "Hei", at: "" }], 3) === "Kunde: Hei\n[Kunden la ved 3 bilder]"
+  );
+
+  check("portal: the link is appended once", withPortalLink("Hei", "https://x/k/a") === "Hei\n\nSe saken din: https://x/k/a" && withPortalLink("Se https://x/k/a", "https://x/k/a") === "Se https://x/k/a");
+  check("email: the business is the sender's name", withDisplayName("Maya <varsel@humanframe.app>", "Hansen \"Rør\"") === `"Hansen Rør" <varsel@humanframe.app>`);
+  const rendered = renderCustomerEmail({ businessName: "Hansen <Rør>", body: "Hei\n\nLinje", link: { url: "https://x/k/a", label: "Se tilbudet" } });
+  check("email: escaped, with a button", rendered.html.includes("Hansen &lt;Rør&gt;") && rendered.html.includes("Se tilbudet") && rendered.text.endsWith("Se tilbudet: https://x/k/a"));
+
+  const kroner = computeWeekStats({
+    weekStart: "2026-10-19",
+    inquiries: [{ channel: "web", status: "open", title: "Bad", urgency: "normal", durationSeconds: null, transcript: "x" }],
+    actions: [],
+    customerSmsSent: 0,
+    quotes: [{ status: "accepted", total: 48500 }, { status: "sent", total: 12000 }],
+  });
+  check(
+    "report: kroner from quotes",
+    kroner.webRequests === 1 && kroner.quotesSent === 2 && kroner.quotesAccepted === 1 && kroner.acceptedValue === 48500 && kroner.quotedValue === 60500,
+    kroner
+  );
+  check("report: the subject leads with accepted kroner", /^48\s500 kr i godtatte tilbud/.test(renderReport(kroner, "Hansen").subject), renderReport(kroner, "Hansen").subject);
 }
 
 console.log(`\n${passed}/${passed + failed} passed`);

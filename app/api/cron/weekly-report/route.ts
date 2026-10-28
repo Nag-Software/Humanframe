@@ -15,12 +15,12 @@ export async function GET(request: Request) {
   if (!isCronRequest(request)) return new Response("Forbidden", { status: 403 });
 
   const admin = getServiceRoleClient();
-  const { data } = await admin
-    .from("phone_numbers")
-    .select("workspace_id")
-    .eq("status", "active")
-    .returns<{ workspace_id: string }[]>();
-  const workspaces = [...new Set((data ?? []).map((row) => row.workspace_id))];
+  // Every business that has set up the receptionist: a number or a profile.
+  const [{ data: numbers }, { data: profiles }] = await Promise.all([
+    admin.from("phone_numbers").select("workspace_id").eq("status", "active").returns<{ workspace_id: string }[]>(),
+    admin.from("business_profiles").select("workspace_id").not("onboarded_at", "is", null).returns<{ workspace_id: string }[]>(),
+  ]);
+  const workspaces = [...new Set([...(numbers ?? []), ...(profiles ?? [])].map((row) => row.workspace_id))];
 
   const results: Record<string, number> = {};
   for (const workspaceId of workspaces) {

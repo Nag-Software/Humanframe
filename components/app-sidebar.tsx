@@ -1,15 +1,15 @@
 "use client"
 
 import * as React from "react"
-import Image from "next/image"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   BarChart3Icon,
+  FileTextIcon,
   HistoryIcon,
   InboxIcon,
-  PhoneForwardedIcon,
   Settings2Icon,
+  SlidersHorizontalIcon,
 } from "lucide-react"
 
 import { useTranslations } from "@/components/i18n-provider"
@@ -22,12 +22,13 @@ import {
   isSettingsTabId,
   type SettingsTabId,
 } from "@/components/settings-dialog"
-import { TeamSwitcher } from "@/components/team-switcher"
+import { LogoMark } from "@/components/hf/logo"
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuBadge,
@@ -109,61 +110,27 @@ export function AppSidebar({
 
   return (
     <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader>
-        <TeamSwitcher
-          teams={[
-            {
-              name: workspaceName,
-              logo: (
-                <Image
-                  src="/icon.png"
-                  alt=""
-                  width={64}
-                  height={64}
-                  className="size-auto bg-white"
-                />
-              ),
-              plan: t.nav.plans[plan],
-            },
-          ]}
-        />
+      <SidebarHeader className="gap-3 px-3 pt-4 pb-2">
+        <Link href="/inbox" className="flex items-center gap-2.5 px-1 group-data-[collapsible=icon]:px-0">
+          <LogoMark className="size-7 shrink-0" />
+          <span className="flex min-w-0 flex-col group-data-[collapsible=icon]:hidden">
+            <span className="font-serif text-[1.3rem] leading-none tracking-[-0.02em]">Humanframe</span>
+            <span className="text-muted-foreground mt-1 truncate text-[11px]">
+              {workspaceName} · {t.nav.plans[plan]}
+            </span>
+          </span>
+        </Link>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip={t.receptionist.nav.inbox}
-                isActive={pathname.startsWith("/inbox")}
-                render={<Link href="/inbox" />}
-              >
-                <InboxIcon />
-                <span>{t.receptionist.nav.inbox}</span>
-              </SidebarMenuButton>
-              {inboxWaiting > 0 ? (
-                <SidebarMenuBadge>{inboxWaiting}</SidebarMenuBadge>
-              ) : null}
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip={t.receptionist.nav.reports}
-                isActive={pathname.startsWith("/reports")}
-                render={<Link href="/reports" />}
-              >
-                <BarChart3Icon />
-                <span>{t.receptionist.nav.reports}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip={t.receptionist.nav.setup}
-                isActive={pathname.startsWith("/setup")}
-                render={<Link href="/setup" />}
-              >
-                <PhoneForwardedIcon />
-                <span>{t.receptionist.nav.setup}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+          <SidebarGroupLabel>{t.receptionist.nav.work}</SidebarGroupLabel>
+          <SidebarMenu className="gap-0.5">
+            <NavLink href="/inbox" label={t.receptionist.nav.inbox} active={pathname.startsWith("/inbox")} icon={<InboxIcon />}>
+              {inboxWaiting > 0 ? <SidebarMenuBadge className="bg-fjord text-fjord-foreground rounded-full px-1.5">{inboxWaiting}</SidebarMenuBadge> : null}
+            </NavLink>
+            <NavLink href="/quotes" label={t.receptionist.nav.quotes} active={pathname.startsWith("/quotes")} icon={<FileTextIcon />} />
+            <NavLink href="/reports" label={t.receptionist.nav.reports} active={pathname.startsWith("/reports")} icon={<BarChart3Icon />} />
+            <NavLink href="/setup" label={t.receptionist.nav.setup} active={pathname.startsWith("/setup")} icon={<SlidersHorizontalIcon />} />
           </SidebarMenu>
         </SidebarGroup>
         <NavTeam colleagues={colleagues} activeSlug={maya?.slug ?? null} />
@@ -214,5 +181,34 @@ export function AppSidebar({
         canManageBilling={canManageBilling}
       />
     </Sidebar>
+  )
+}
+
+function NavLink({
+  href,
+  label,
+  active,
+  icon,
+  children,
+}: {
+  href: string
+  label: string
+  active: boolean
+  icon: React.ReactNode
+  children?: React.ReactNode
+}) {
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        tooltip={label}
+        isActive={active}
+        className="h-9 data-active:bg-card data-active:shadow-hairline data-active:font-medium"
+        render={<Link href={href} />}
+      >
+        {icon}
+        <span>{label}</span>
+      </SidebarMenuButton>
+      {children}
+    </SidebarMenuItem>
   )
 }
