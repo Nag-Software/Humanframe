@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { beginAuthorization, bindAccount } from "@/server/connectors/accounts";
 import {
   createAuthorizationLink,
-  type EmailProvider,
+  type ConnectorProvider,
 } from "@/server/connectors/composio";
 import { getRequestScope } from "@/server/db/request-scope";
 
@@ -14,9 +14,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { provider } = (await request.json()) as { provider: EmailProvider };
+    const { provider } = (await request.json()) as { provider: ConnectorProvider };
 
-    if (!provider || !["gmail", "outlook"].includes(provider)) {
+    if (!provider || !["gmail", "outlook", "googlecalendar"].includes(provider)) {
       return NextResponse.json({ error: "Invalid provider" }, { status: 400 });
     }
 

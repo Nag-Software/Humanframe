@@ -23,6 +23,13 @@ import { serverEnv } from "@/lib/env";
  */
 
 export type EmailProvider = "gmail" | "outlook";
+/** The receptionist books into the business's calendar; see server/calendar. */
+export type CalendarProvider = "googlecalendar";
+export type ConnectorProvider = EmailProvider | CalendarProvider;
+
+export function isEmailProvider(provider: ConnectorProvider): provider is EmailProvider {
+  return provider === "gmail" || provider === "outlook";
+}
 
 /** Verified against the live API on 2026-09-15; argument names are theirs. */
 export const PROVIDER_TOOLS = {
@@ -59,7 +66,14 @@ export const PROVIDER_SCOPES = {
     "https://www.googleapis.com/auth/userinfo.email",
   ],
   outlook: ["Mail.Read", "Mail.Send", "User.Read", "offline_access"],
-} as const satisfies Record<EmailProvider, readonly string[]>;
+  // Free/busy to offer callers real times, events to write approved bookings.
+  // Not `calendar`, which would let us delete or share the owner's calendars.
+  googlecalendar: [
+    "https://www.googleapis.com/auth/calendar.freebusy",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/userinfo.email",
+  ],
+} as const satisfies Record<ConnectorProvider, readonly string[]>;
 
 let cached: Composio | null = null;
 
@@ -73,12 +87,14 @@ export function composioClient(): Composio {
 }
 
 /** The auth config to connect through. Fails closed rather than falling back. */
-export function authConfigFor(provider: EmailProvider): string {
+export function authConfigFor(provider: ConnectorProvider): string {
   const env = serverEnv();
   const id =
     provider === "gmail"
       ? env.COMPOSIO_GMAIL_AUTH_CONFIG_ID
-      : env.COMPOSIO_OUTLOOK_AUTH_CONFIG_ID;
+      : provider === "outlook"
+        ? env.COMPOSIO_OUTLOOK_AUTH_CONFIG_ID
+        : env.COMPOSIO_GOOGLECALENDAR_AUTH_CONFIG_ID;
 
   if (!id) {
     // Without an explicit config Composio would use its own default, which
@@ -115,7 +131,7 @@ export type AuthorizationOutcome =
  *    access, so the config is passed positionally here, where it is required.
  */
 export async function createAuthorizationLink(input: {
-  provider: EmailProvider;
+  provider: ConnectorProvider;
   composioUserId: string;
   callbackUrl: string;
 }): Promise<AuthorizationOutcome> {
@@ -203,7 +219,7 @@ type RawAccount = {
  */
 async function listUserAccounts(
   composioUserId: string,
-  provider: EmailProvider
+  provider: ConnectorProvider
 ): Promise<RawAccount[]> {
   const page = (await composioClient().connectedAccounts.list({
     userIds: [composioUserId],
@@ -232,7 +248,7 @@ async function listUserAccounts(
 export async function readOwnedAccount(input: {
   connectedAccountId: string;
   composioUserId: string;
-  provider: EmailProvider;
+  provider: ConnectorProvider;
 }): Promise<ConnectedAccountFacts | null> {
   const owned = await listUserAccounts(input.composioUserId, input.provider).catch(
     () => [] as RawAccount[]
@@ -313,7 +329,7 @@ export async function executeProviderTool(input: {
 
 /** The toolkit versions Composio currently offers, newest first. */
 export async function availableToolkitVersions(
-  provider: EmailProvider
+  provider: ConnectorProvider
 ): Promise<string[]> {
   const toolkit = (await composioClient().toolkits.get(provider)) as {
     meta?: { availableVersions?: string[] };

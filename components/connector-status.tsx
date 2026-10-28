@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { ConnectorAccount } from "@/server/connectors/accounts"
 
-const PROVIDERS = ["gmail", "outlook"] as const
+const PROVIDERS = ["gmail", "outlook", "googlecalendar"] as const
 type Provider = (typeof PROVIDERS)[number]
 
 type Row = {
@@ -55,7 +55,7 @@ export function ConnectorStatus() {
 
   const needle = query.trim().toLowerCase()
   const visible = rows.filter((row) => {
-    const name = row.provider === "gmail" ? copy.gmail : copy.outlook
+    const name = providerName(row.provider, copy)
     const haystack = `${name} ${row.account?.accountEmail ?? ""}`.toLowerCase()
     return haystack.includes(needle)
   })
@@ -83,7 +83,7 @@ export function ConnectorStatus() {
 
   async function disconnect(account: ConnectorAccount) {
     if (!window.confirm(copy.disconnectConfirm)) return
-    setBusy(account.provider)
+    setBusy(account.provider as Provider)
     try {
       const res = await fetch(`/api/connectors/disconnect/${account.id}`, {
         method: "POST",
@@ -174,7 +174,7 @@ function ConnectorRow({
 }) {
   const t = useTranslations()
   const copy = t.settings.connections
-  const name = row.provider === "gmail" ? copy.gmail : copy.outlook
+  const name = providerName(row.provider, copy)
   const status = row.account?.status
   const connected = status === "active"
   const needsReconnect = status === "expired" || status === "revoked"
@@ -193,7 +193,7 @@ function ConnectorRow({
         </div>
       </div>
       <span className="text-muted-foreground hidden text-sm sm:block">
-        {copy.typeEmail}
+        {row.provider === "googlecalendar" ? copy.typeCalendar : copy.typeEmail}
       </span>
       <div className="flex items-center justify-end">
         {connected ? (
@@ -238,8 +238,36 @@ function ProviderMark({ provider }: { provider: Provider }) {
       aria-hidden
       className="border-border/60 bg-background flex size-6 shrink-0 items-center justify-center rounded-md border"
     >
-      {provider === "gmail" ? <GmailMark /> : <OutlookMark />}
+      {provider === "gmail" ? (
+        <GmailMark />
+      ) : provider === "outlook" ? (
+        <OutlookMark />
+      ) : (
+        <CalendarMark />
+      )}
     </span>
+  )
+}
+
+function providerName(
+  provider: Provider,
+  copy: { gmail: string; outlook: string; googleCalendar: string }
+): string {
+  return provider === "gmail"
+    ? copy.gmail
+    : provider === "outlook"
+      ? copy.outlook
+      : copy.googleCalendar
+}
+
+function CalendarMark() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-3.5" fill="none">
+      <rect x="3" y="4" width="18" height="17" rx="2" fill="#4285F4" />
+      <rect x="3" y="4" width="18" height="5" rx="2" fill="#1967D2" />
+      <rect x="6" y="11" width="12" height="7" rx="1" fill="#fff" />
+      <path d="M8 2.5v3M16 2.5v3" stroke="#1967D2" strokeWidth="2" strokeLinecap="round" />
+    </svg>
   )
 }
 

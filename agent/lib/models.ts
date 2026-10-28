@@ -89,3 +89,20 @@ export function embeddingModel(): EmbeddingModel {
 export function normalizeEntityName(name: string): string {
   return name.replace(/\s+/g, " ").trim().toLowerCase();
 }
+
+/**
+ * The model behind the receptionist's paperwork: reading a website into a
+ * business profile, and a call transcript into an intake. Not the voice on
+ * the phone — that is the realtime model in server/telephony/openai-sip.ts.
+ */
+export function receptionistModel(): LanguageModel {
+  const route = readRoute("RECEPTIONIST_MODEL_PROVIDER", "gateway");
+  assertCredentials(route, "RECEPTIONIST_MODEL_PROVIDER");
+
+  const id = readModelId(
+    "RECEPTIONIST_MODEL",
+    route === "gateway" ? "openai/gpt-5-mini" : "gpt-5-mini"
+  );
+
+  return route === "gateway" ? id : openai(id);
+}

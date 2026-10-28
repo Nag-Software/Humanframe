@@ -79,6 +79,8 @@ const serverSchema = z.object({
   // server/connectors/composio.ts.
   COMPOSIO_GMAIL_AUTH_CONFIG_ID: z.string().optional(),
   COMPOSIO_OUTLOOK_AUTH_CONFIG_ID: z.string().optional(),
+  // Google Calendar for the receptionist's bookings: free/busy + events only.
+  COMPOSIO_GOOGLECALENDAR_AUTH_CONFIG_ID: z.string().optional(),
   // Billing. Off unless an environment turns it on: with it off, nothing is
   // gated on a subscription and no Stripe call is ever made, so a preview
   // deployment cannot charge anyone. The price ids come from

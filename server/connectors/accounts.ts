@@ -4,7 +4,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getRuntimeSupabase } from "@/agent/lib/supabase";
 import { errorFields, logger } from "@/lib/logger";
-import type { EmailProvider } from "@/server/connectors/composio";
+import {
+  isEmailProvider,
+  type ConnectorProvider,
+  type EmailProvider,
+} from "@/server/connectors/composio";
 import { getAssistantBySlug } from "@/server/db/repositories/assistants";
 
 /**
@@ -20,7 +24,7 @@ export type ConnectorAccount = {
   id: string;
   workspaceId: string;
   userId: string;
-  provider: EmailProvider;
+  provider: ConnectorProvider;
   composioUserId: string;
   connectedAccountId: string | null;
   accountEmail: string | null;
@@ -31,7 +35,7 @@ type AccountRow = {
   id: string;
   workspace_id: string;
   user_id: string;
-  provider: EmailProvider;
+  provider: ConnectorProvider;
   composio_user_id: string;
   connected_account_id: string | null;
   account_email: string | null;
@@ -75,7 +79,7 @@ function toAccount(row: AccountRow): ConnectorAccount {
 export async function beginAuthorization(input: {
   workspaceId: string;
   userId: string;
-  provider: EmailProvider;
+  provider: ConnectorProvider;
 }): Promise<string> {
   const state = randomBytes(32).toString("base64url");
   const { error } = await connectorClient().from("connector_oauth_states").insert({
@@ -96,7 +100,7 @@ export async function beginAuthorization(input: {
 export type ConsumedState = {
   workspaceId: string;
   userId: string;
-  provider: EmailProvider;
+  provider: ConnectorProvider;
 };
 
 /**
@@ -115,7 +119,7 @@ export async function consumeAuthorizationState(
     .is("consumed_at", null)
     .gt("expires_at", new Date().toISOString())
     .select("workspace_id, user_id, provider")
-    .maybeSingle<{ workspace_id: string; user_id: string; provider: EmailProvider }>();
+    .maybeSingle<{ workspace_id: string; user_id: string; provider: ConnectorProvider }>();
 
   return data
     ? { workspaceId: data.workspace_id, userId: data.user_id, provider: data.provider }
@@ -140,7 +144,7 @@ export async function consumeAuthorizationState(
 export async function bindAccount(input: {
   workspaceId: string;
   userId: string;
-  provider: EmailProvider;
+  provider: ConnectorProvider;
   composioUserId: string;
   connectedAccountId: string;
   accountEmail: string | null;
@@ -199,6 +203,11 @@ export async function bindAccount(input: {
   }
 
   const account = toAccount(data);
+  // A calendar is the receptionist's, used by the server after the owner
+  // approves a booking. No assistant is granted it, so no model can reach it.
+  if (!isEmailProvider(input.provider)) {
+    return account;
+  }
   await grantMayaMailbox({
     workspaceId: input.workspaceId,
     userId: input.userId,

@@ -26,6 +26,10 @@ export const LIMITS = {
   memoryEdit: { bucket: "memory.edit", limit: 30, windowSeconds: 60 },
   callStart: { bucket: "call.start", limit: 10, windowSeconds: 60 },
   billing: { bucket: "billing", limit: 10, windowSeconds: 60 },
+  // Reading a website costs a crawl and a model call.
+  receptionistLearn: { bucket: "receptionist.learn", limit: 5, windowSeconds: 300 },
+  receptionistDecide: { bucket: "receptionist.decide", limit: 60, windowSeconds: 60 },
+  receptionistNumber: { bucket: "receptionist.number", limit: 3, windowSeconds: 3600 },
 } as const satisfies Record<string, RateLimit>;
 
 export async function takeRateLimit(
