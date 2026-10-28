@@ -1,5 +1,7 @@
 # Gaps — vision versus the code
 
+> **2026-10-28:** Prioriteringen styres nå av byggelisten i [`PIVOT.md`](PIVOT.md). Video (1.3) er ikke lenger blokkerende, og «Chief of Staff»-rollen (5.3) gjelder ikke lenger; kalender (2.6, 4.3) er det fortsatt.
+
 Status: written 2026-09-17 against branch `facetime` at `7ea310b`, after a
 full pass over the code, `tsc`, `next build` and every deterministic suite
 (292 checks green). The reference is [`VISION.md`](VISION.md); the plans in

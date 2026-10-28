@@ -1,5 +1,7 @@
 # Humanframe — Product Vision and MVP Plan
 
+> **2026-10-28:** Retningen er endret. Se [`PIVOT.md`](PIVOT.md) – norsk AI-resepsjonist for småbedrifter. Der de to er uenige, gjelder PIVOT.md.
+
 ## Vision
 
 Humanframe is an operating system for digital employees.
