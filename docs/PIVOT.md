@@ -59,6 +59,10 @@ svarer. Vi lover at forespørselen blir en jobb.
 5. **Ny merkevare og nytt grensesnitt** med premium følelse: rolig, varmt og
    presist – et verktøy en håndverker er stolt av å vise kunden.
 
+Status 29. okt.: punkt 1–5 er bygget (se [`WEB.md`](WEB.md)). Gjenstår før
+første kunde: kjøre migrasjonene, sette opp e-post (Resend) og legge inn
+prislisten i Oppsett.
+
 **Det vi ikke konkurrerer på:** telefonvolum, BankID, bank og kommune, og
 gratis FAQ-felt. Telefonen kommer senere som en kanal inn i samme løp; koden
 for den ligger klar (docs/RECEPTIONIST.md).

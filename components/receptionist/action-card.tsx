@@ -212,15 +212,17 @@ function Summary({
     return (
       <div className="flex flex-col gap-3">
         <p className="font-serif text-xl leading-tight">{text(payload, "title")}</p>
-        <div className="rounded-xl border">
+        <div className="overflow-hidden rounded-xl border">
           {lines.map((line, index) => (
             <div key={index} className="flex items-baseline justify-between gap-4 border-b px-4 py-2.5 text-sm last:border-b-0">
               <span>
                 {line.description}
-                <span className="text-muted-foreground">
-                  {" "}
-                  · {line.quantity} {line.unit} × {formatNok(line.unitPrice)}
-                </span>
+                {line.unit === "fast" ? null : (
+                  <span className="text-muted-foreground">
+                    {" "}
+                    · {line.quantity} {line.unit} × {formatNok(line.unitPrice)}
+                  </span>
+                )}
               </span>
               <span className="tabular shrink-0">{formatNok(line.quantity * line.unitPrice)}</span>
             </div>

@@ -3,9 +3,10 @@
 A Norwegian AI receptionist for small businesses that also does the work after
 the call: it answers the calls the business cannot take, then proposes the
 booking, the SMS with a photo link or the reply, and the owner approves each
-with one tap. See [`docs/PIVOT.md`](docs/PIVOT.md) for why, and
-[`docs/RECEPTIONIST.md`](docs/RECEPTIONIST.md) for how it works and how to
-switch it on.
+with one tap. See [`docs/PIVOT.md`](docs/PIVOT.md) for why,
+[`docs/WEB.md`](docs/WEB.md) for the website widget, quotes and customer page,
+and [`docs/RECEPTIONIST.md`](docs/RECEPTIONIST.md) for the optional phone
+channel.
 
 It grew out of **Maya** — a Chief of Staff you chat with, call, and meet face
 to face, who remembers you between conversations — and Maya is still here.

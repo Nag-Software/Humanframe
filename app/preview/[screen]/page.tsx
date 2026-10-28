@@ -6,13 +6,14 @@ import { Initials, Pill, Stat, Surface } from "@/components/hf/surface";
 import { PortalView } from "@/components/portal/portal-view";
 import { ActionCard } from "@/components/receptionist/action-card";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { WidgetChat } from "@/components/widget/widget-chat";
 
 /**
  * Design previews with sample data, for screenshots and review without a
  * database. Never served in production.
  */
 export default async function PreviewPage({ params }: PageProps<"/preview/[screen]">) {
-  if (process.env.NODE_ENV === "production") notFound();
+  if (process.env.NODE_ENV === "production" && process.env.HUMANFRAME_PREVIEW !== "true") notFound();
   const { screen } = await params;
   const slots = [1, 2, 3, 4].map((day) => new Date(Date.UTC(2026, 10, day + 2, 7)).toISOString());
 
@@ -52,6 +53,31 @@ export default async function PreviewPage({ params }: PageProps<"/preview/[scree
         booked={null}
         requested={null}
         slots={slots}
+      />
+    );
+  }
+
+  if (screen === "widget") {
+    return (
+      <WidgetChat
+        widgetKey="preview"
+        embedded
+        origin={null}
+        business={{ name: "Hansen Rør", greeting: "", color: null, area: "Bergen" }}
+        demo={{
+          messages: [
+            { role: "assistant", content: "Hei! Jeg hjelper deg å sende en forespørsel til Hansen Rør. Hva kan vi hjelpe deg med?" },
+            { role: "user", content: "Det lekker under kjøkkenvasken, mest når oppvaskmaskinen går." },
+            { role: "assistant", content: "Det høres ut som koblingen. Ta gjerne et bilde under vasken med binders-knappen, så ser rørleggeren det med en gang." },
+            { role: "user", content: "Jeg har lagt ved 3 bilder." },
+            { role: "assistant", content: "Takk, det hjelper! Hvor er det, og hva er navnet og nummeret ditt?" },
+            { role: "user", content: "Storgata 12 i Bergen. Kari Nordmann, 912 34 567." },
+            { role: "assistant", content: "Supert, Kari. Jeg har alt eieren trenger. Trykk «Send forespørsel», så får du tilbud eller forslag til tid." },
+          ],
+          photos: 3,
+          collected: { name: "Kari Nordmann", phone: "91234567", email: null, address: "Storgata 12, Bergen", job: "Lekkasje under kjøkkenvask", when: "Neste uke" },
+          canSubmit: true,
+        }}
       />
     );
   }

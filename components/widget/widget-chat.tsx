@@ -27,6 +27,12 @@ type Stored = {
   portalUrl: string | null;
 };
 
+function displayPhone(value: string | null): string | null {
+  if (!value) return null;
+  const digits = value.replace(/\D/g, "").replace(/^47(?=\d{8}$)/, "");
+  return /^\d{8}$/.test(digits) ? `${digits.slice(0, 3)} ${digits.slice(3, 5)} ${digits.slice(5)}` : value;
+}
+
 const EMPTY: Collected = { name: null, phone: null, email: null, address: null, job: null, when: null };
 
 /**
@@ -39,11 +45,14 @@ export function WidgetChat({
   embedded,
   origin,
   business,
+  demo,
 }: {
   widgetKey: string;
   embedded: boolean;
   origin: string | null;
   business: { name: string; greeting: string; color: string | null; area: string };
+  /** A finished-looking conversation for previews; no network is used. */
+  demo?: Omit<Stored, "sessionId" | "uploadToken" | "portalUrl">;
 }) {
   const storageKey = `humanframe:${widgetKey}`;
   const [state, setState] = useState<Stored | null>(null);
@@ -68,6 +77,11 @@ export function WidgetChat({
   }
 
   useEffect(() => {
+    if (demo) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- preview data
+      setState({ ...demo, sessionId: "demo", uploadToken: "", portalUrl: null });
+      return;
+    }
     let restored: Stored | null = null;
     try {
       const raw = sessionStorage.getItem(storageKey);
@@ -76,7 +90,6 @@ export function WidgetChat({
       restored = null;
     }
     if (restored?.sessionId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- restore after mount
       setState(restored);
       return;
     }
@@ -322,7 +335,7 @@ export function WidgetChat({
                 <>
                   <p className="text-sm font-semibold">Klar til å sende</p>
                   <p className="text-muted-foreground mt-1 text-[13px] leading-relaxed">
-                    {[collected.job, collected.name, collected.phone ?? collected.email, collected.when].filter(Boolean).join(" · ")}
+                    {[collected.job, collected.name, displayPhone(collected.phone) ?? collected.email, collected.when].filter(Boolean).join(" · ")}
                   </p>
                 </>
               ) : (
