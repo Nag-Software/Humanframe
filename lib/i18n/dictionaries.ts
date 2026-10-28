@@ -36,7 +36,12 @@ export const en = {
     providerError: "Sign-in failed at the provider. Try again, or use email.",
     bootstrapError:
       "You are signed in, but we could not set up your workspace. Sign out and try again — if it keeps happening, contact support.",
-    rateLimited: "Too many attempts. Wait a minute and try again.",
+    rateLimited: "Too many sign-in emails were sent recently. Wait a while, or use Google.",
+    notAuthorized:
+      "The email service can only send to the project team's own addresses. Set up custom SMTP in Supabase, or use Google.",
+    signupDisabled: "New sign-ups by email are turned off for this project. Use Google, or ask for an invite.",
+    emailDeliveryFailed:
+      "The sign-in email could not be sent. The email (SMTP) settings or the email template in Supabase need fixing. Use Google in the meantime.",
     codeLabel: "Or type the code from the email",
     verifyCode: "Sign in with code",
     verifying: "Checking…",
@@ -608,7 +613,12 @@ export const no: Dictionary = {
     providerError: "Innloggingen feilet hos leverandøren. Prøv igjen, eller bruk e-post.",
     bootstrapError:
       "Du er logget inn, men vi fikk ikke satt opp arbeidsområdet ditt. Logg ut og prøv igjen – skjer det igjen, kontakt support.",
-    rateLimited: "For mange forsøk. Vent ett minutt og prøv igjen.",
+    rateLimited: "Det er sendt for mange innloggings-e-poster nylig. Vent litt, eller bruk Google.",
+    notAuthorized:
+      "E-posttjenesten kan bare sende til adressene i prosjektteamet. Sett opp egen SMTP i Supabase, eller bruk Google.",
+    signupDisabled: "Nye registreringer med e-post er slått av for dette prosjektet. Bruk Google, eller be om en invitasjon.",
+    emailDeliveryFailed:
+      "Innloggings-e-posten kunne ikke sendes. E-postinnstillingene (SMTP) eller e-postmalen i Supabase må rettes. Bruk Google så lenge.",
     codeLabel: "Eller skriv inn koden fra e-posten",
     verifyCode: "Logg inn med kode",
     verifying: "Sjekker…",

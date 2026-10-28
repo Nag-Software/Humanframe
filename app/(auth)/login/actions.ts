@@ -64,16 +64,48 @@ export async function sendSignInLink(
   });
 
   if (error) {
-    logger.error("auth.signin_link_failed", errorFields(error));
-    const rateLimited = error.status === 429 || /rate/i.test(error.message);
-    return {
-      status: "error",
-      message: rateLimited ? t.auth.rateLimited : t.auth.genericError,
-    };
+    logger.error("auth.signin_link_failed", {
+      ...errorFields(error),
+      status: error.status ?? null,
+      code: error.code ?? null,
+    });
+    return { status: "error", message: signInErrorMessage(t, error) };
   }
 
   logger.info("auth.signin_link_sent");
   return { status: "sent", message: t.auth.sent, email: parsed.data.email };
+}
+
+/**
+ * Says why Supabase would not send the email, instead of "try again" for
+ * everything. Each of these is a project setting, not something the user can
+ * fix by retrying, so the message names it; the code is appended so the
+ * owner of the Supabase project can look it up.
+ */
+function signInErrorMessage(
+  t: ReturnType<typeof getDictionary>,
+  error: { status?: number; code?: string; message: string }
+): string {
+  const code = error.code ?? "";
+  const text = error.message.toLowerCase();
+  const tag = (message: string) => `${message} (${code || error.status || "auth"})`;
+
+  if (error.status === 429 || code.includes("rate_limit") || text.includes("rate limit")) {
+    return tag(t.auth.rateLimited);
+  }
+  if (code === "email_address_not_authorized" || text.includes("not authorized")) {
+    return tag(t.auth.notAuthorized);
+  }
+  if (code === "signup_disabled" || code === "otp_disabled" || text.includes("signups not allowed")) {
+    return tag(t.auth.signupDisabled);
+  }
+  if (code === "email_address_invalid" || code === "validation_failed") {
+    return tag(t.auth.invalidEmail);
+  }
+  if (text.includes("sending") || text.includes("smtp") || code === "unexpected_failure" || (error.status ?? 0) >= 500) {
+    return tag(t.auth.emailDeliveryFailed);
+  }
+  return tag(t.auth.genericError);
 }
 
 /**
