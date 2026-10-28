@@ -17,9 +17,22 @@ export default async function LoginPage({
 }: PageProps<"/login">) {
   const params = await searchParams;
   const rawNext = typeof params.next === "string" ? params.next : undefined;
-  const next = rawNext?.startsWith("/") ? rawNext : undefined;
-  const expired = params.error === "expired";
+  const next =
+    rawNext?.startsWith("/") && !rawNext.startsWith("//") ? rawNext : undefined;
   const t = await getTranslations();
+  const error = typeof params.error === "string" ? params.error : null;
+  const errorMessage =
+    error === "expired"
+      ? t.auth.expiredLink
+      : error === "other_browser"
+        ? t.auth.otherBrowser
+        : error === "denied"
+          ? t.auth.deniedLink
+          : error === "provider"
+            ? t.auth.providerError
+            : error === "bootstrap"
+              ? t.auth.bootstrapError
+              : null;
 
   return (
     <div className="grid min-h-svh lg:grid-cols-2">
@@ -63,10 +76,22 @@ export default async function LoginPage({
               <MagicLinkForm next={next} />
             </div>
 
-            {expired ? (
-              <p role="status" className="text-destructive text-sm">
-                {t.auth.expiredLink}
-              </p>
+            {errorMessage ? (
+              <div className="space-y-3">
+                <p role="status" className="text-destructive text-sm">
+                  {errorMessage}
+                </p>
+                {error === "bootstrap" ? (
+                  <form action="/auth/sign-out" method="post">
+                    <button
+                      type="submit"
+                      className="text-sm underline underline-offset-4"
+                    >
+                      {t.auth.signOut}
+                    </button>
+                  </form>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </div>

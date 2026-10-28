@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { ensureBootstrap } from "@/server/auth/bootstrap";
 import type { ThreadScope } from "@/server/db/repositories/threads";
 import {
   getActiveWorkspace,
@@ -28,7 +29,15 @@ export async function getRequestScope(): Promise<RequestScope | null> {
     return null;
   }
 
-  const workspace = await getActiveWorkspace(client, user.id);
+  let workspace = await getActiveWorkspace(client, user.id);
+  if (!workspace) {
+    // A session without a workspace is a sign-in that never finished
+    // provisioning. Converge here rather than treat the user as signed out.
+    const bootstrap = await ensureBootstrap(client, user.id);
+    if (bootstrap.ok) {
+      workspace = await getActiveWorkspace(client, user.id);
+    }
+  }
   if (!workspace) {
     return null;
   }
@@ -52,7 +61,13 @@ export async function getRequestScope(): Promise<RequestScope | null> {
 export async function requireRequestScope(): Promise<RequestScope> {
   const scope = await getRequestScope();
   if (!scope) {
-    redirect("/login");
+    // Signed in but unprovisioned gets the explanation, not a bare /login
+    // that the proxy would bounce straight back here.
+    const client = await createSupabaseServerClient();
+    const {
+      data: { user },
+    } = await client.auth.getUser();
+    redirect(user ? "/login?error=bootstrap" : "/login");
   }
   return scope;
 }
