@@ -1,8 +1,8 @@
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import { lookup } from "node:dns/promises";
-import { request as httpRequest, type IncomingMessage } from "node:http";
-import { request as httpsRequest } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
+
+import { Agent, fetch as undiciFetch } from "undici";
 
 /**
  * Reading a business's public website, safely.
@@ -112,52 +112,46 @@ export const guardedLookup: LookupFunction = (hostname, options, callback) => {
   });
 };
 
-function getOnce(url: URL): Promise<{ status: number; location: string | null; type: string; body: string }> {
-  return new Promise((resolve, reject) => {
-    const send = url.protocol === "https:" ? httpsRequest : httpRequest;
-    const req = send(
-      url,
-      {
-        method: "GET",
-        lookup: guardedLookup,
-        timeout: TIMEOUT_MS,
-        headers: {
-          "user-agent": "HumanframeBot/1.0 (+https://humanframe.app)",
-          accept: "text/html,application/xhtml+xml",
-          "accept-language": "nb-NO,nb;q=0.9,no;q=0.8,en;q=0.5",
-        },
-      },
-      (response: IncomingMessage) => {
-        const status = response.statusCode ?? 0;
-        const location = typeof response.headers.location === "string" ? response.headers.location : null;
-        const type = String(response.headers["content-type"] ?? "");
-        if (status >= 300 && status < 400) {
-          response.resume();
-          return resolve({ status, location, type, body: "" });
-        }
-        const chunks: Buffer[] = [];
-        let total = 0;
-        response.on("data", (chunk: Buffer) => {
-          total += chunk.length;
-          if (total <= MAX_BYTES) chunks.push(chunk);
-          else response.destroy();
-        });
-        const finish = () =>
-          resolve({
-            status,
-            location,
-            type,
-            body: new TextDecoder("utf-8", { fatal: false }).decode(Buffer.concat(chunks).subarray(0, MAX_BYTES)),
-          });
-        response.on("end", finish);
-        response.on("close", finish);
-        response.on("error", reject);
-      }
-    );
-    req.on("timeout", () => req.destroy(new Error(`Timed out reading ${url.hostname}`)));
-    req.on("error", reject);
-    req.end();
+// undici rather than node:https: it sends ALPN like a browser does, and some
+// hosts (Wix, a few CDNs) end the handshake with "alert internal error"
+// without it. The lookup hook keeps the address check at connect time.
+const crawler = new Agent({
+  connect: { lookup: guardedLookup, timeout: TIMEOUT_MS },
+  headersTimeout: TIMEOUT_MS,
+  bodyTimeout: TIMEOUT_MS,
+});
+
+async function getOnce(url: URL): Promise<{ status: number; location: string | null; type: string; body: string }> {
+  const response = await undiciFetch(url, {
+    dispatcher: crawler,
+    redirect: "manual",
+    headers: {
+      "user-agent": "Mozilla/5.0 (compatible; HumanframeBot/1.0; +https://humanframe.app)",
+      accept: "text/html,application/xhtml+xml",
+      "accept-language": "nb-NO,nb;q=0.9,no;q=0.8,en;q=0.5",
+    },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
+  const status = response.status;
+  const location = response.headers.get("location");
+  const type = response.headers.get("content-type") ?? "";
+  if (status >= 300 && status < 400) {
+    await response.body?.cancel().catch(() => undefined);
+    return { status, location, type, body: "" };
+  }
+
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (reader && total < MAX_BYTES) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.byteLength;
+  }
+  await reader?.cancel().catch(() => undefined);
+  const body = new TextDecoder("utf-8", { fatal: false }).decode(Buffer.concat(chunks).subarray(0, MAX_BYTES));
+  return { status, location, type, body };
 }
 
 /** One page, following at most three redirects, each re-checked. */
